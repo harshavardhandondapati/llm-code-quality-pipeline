@@ -93,6 +93,44 @@ def run_final_pipeline(
     candidate_report = settings.results_directory / candidate_report_file_name(selected_dataset)
     candidate_report.write_text(json.dumps({"records": [record]}, indent=2) + "\n", encoding="utf-8")
 
+    if not baseline_failed:
+        active_model_name = model_name or _default_model_name(provider, settings)
+        failure_parts = ["Baseline failure was not reproduced, so the pipeline stopped before LLM analysis."]
+        if not compile_result.succeeded:
+            failure_parts.append(f"Compile step failed. See {workspace.logs / 'bugsinpy_compile.json'}.")
+        elif test_result is None:
+            failure_parts.append("No triggering test result was available after checkout/compile.")
+        else:
+            failure_parts.append(f"Triggering test returned code {test_result.return_code}. See {workspace.logs}.")
+
+        steps.append(Step("bug_detection", "failed"))
+        steps.append(Step("fix_generation", "failed"))
+        steps.append(Step("patch_validation", "failed"))
+        steps.append(Step("post_fix_evaluation", "failed"))
+        steps.append(Step("metrics", "failed"))
+
+        result = {
+            "dataset": checkout.bug_case.dataset,
+            "language": checkout.bug_case.language,
+            "project": project,
+            "bug_id": bug_id,
+            "mode": "clean",
+            "overall_status": "failed",
+            "successful": False,
+            "provider": provider,
+            "model_name": active_model_name,
+            "workspace_path": str(workspace.root),
+            "candidate_report": str(candidate_report),
+            "failed_steps": [step.name for step in steps if step.status != "passed"],
+            "failure_reason": " ".join(failure_parts),
+            "steps": [asdict(step) for step in steps],
+            "created_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        }
+        (workspace.outputs / "workflow_pipeline_result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        (workspace.outputs / "workflow_pipeline_result.txt").write_text(_as_text(result), encoding="utf-8")
+        (workspace.outputs / "pipeline_run_manifest.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        return result
+
     builder = SourceContextBuilder(
         file_discovery=FileDiscovery(
             extensions=adapter_source_extensions(adapter),

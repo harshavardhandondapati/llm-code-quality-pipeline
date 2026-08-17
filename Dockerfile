@@ -22,6 +22,9 @@ RUN apt-get update \
        ca-certificates \
        cpanminus \
        build-essential \
+       python3-venv \
+       python3-dev \
+       dos2unix \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md requirements.txt UI_REQUIREMENTS.txt ./
@@ -37,13 +40,15 @@ COPY .env.example ./.env.example
 
 RUN chmod +x scripts/prepare_benchmark_tools.sh \
     && python -m pip install --upgrade pip \
-    && python -m pip install -r requirements.txt
+    && python -m pip install -r requirements.txt \
+    && python -m pip install virtualenv
 
 ARG INSTALL_BENCHMARK_TOOLS=true
 
 RUN if [ "$INSTALL_BENCHMARK_TOOLS" = "true" ]; then scripts/prepare_benchmark_tools.sh /app/tools; fi
 
-ENV PIPELINE_BUGSINPY_EXECUTABLE_DIRECTORY=/app/tools/BugsInPy/framework/bin \
+ENV BUGSINPY_HOME=/app/tools/BugsInPy \
+    PIPELINE_BUGSINPY_EXECUTABLE_DIRECTORY=/app/tools/BugsInPy/framework/bin \
     PIPELINE_DEFECTS4J_EXECUTABLE_DIRECTORY=/app/tools/defects4j/framework/bin \
     PATH=/app/tools/BugsInPy/framework/bin:/app/tools/defects4j/framework/bin:$PATH
 
@@ -51,4 +56,4 @@ RUN /app/tools/defects4j/framework/bin/defects4j info -p Chart >/tmp/defects4j_f
 
 EXPOSE 8501
 
-CMD ["sh", "-c", "python -m streamlit run app.py --server.address 0.0.0.0 --server.port ${PORT:-8501} --server.headless true"]
+CMD ["sh", "-c", "python -m streamlit run app.py --server.address 0.0.0.0 --server.port ${PORT:-8501} --server.headless true --server.fileWatcherType none"]

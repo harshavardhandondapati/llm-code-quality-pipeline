@@ -1,0 +1,1048 @@
+Task: fix_generation
+Version: final-1.3-multilanguage-source-focused
+
+[system]
+You generate small, reviewable patches for python benchmark application bugs. Return only valid JSON and no markdown. Do not return an empty patch when benchmark guidance identifies an application source-code defect.
+
+[user]
+Generate a minimal repair for the detected application bug.
+Only modify project source files. Do not modify tests, test frameworks, virtual environments, build tools, or dependency versions unless the bug evidence explicitly requires it.
+Return one valid JSON object only. Do not use markdown. The assistant message content must not be null.
+The JSON must contain patch, explanation, files_modified and fixed_files.
+Preferred format for this pipeline: put the complete corrected source file in fixed_files using the affected relative path as the key.
+If you provide a patch, it must be a unified diff that can be applied with git apply, using paths like a/path/to/File.ext and b/path/to/File.ext.
+The affected relative file path is httpie/downloads.py. Do not modify another path.
+
+Project: httpie
+Bug ID: 1
+Bug found: True
+Affected file: httpie/downloads.py
+Function: filename_from_content_disposition
+Explanation: The download filename is taken from the Content-Disposition header without keeping it inside the filesystem filename length limit.
+
+Failure output / prompt-safe summary:
+pytest tests/test_downloads.py::TestDownloadUtils::test_unique_filename
+RUN EVERY COMMAND
+0
+
+
+Traceback (most recent call last):
+  File "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/repository/httpie/env/lib/python3.10/site-packages/_pytest/main.py", line 12, in <module>
+    from collections import MutableMapping as MappingMixin
+ImportError: cannot import name 'MutableMapping' from 'collections' (/home/harsha-1998/.pyenv/versions/3.10.20/lib/python3.10/collections/__init__.py)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/repository/httpie/env/bin/pytest", line 7, in <module>
+    from pytest import main
+  File "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/repository/httpie/env/lib/python3.10/site-packages/pytest.py", line 21, in <module>
+    from _pytest.main import Item, Collector, File, Session
+  File "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/repository/httpie/env/lib/python3.10/site-packages/_pytest/main.py", line 14, in <module>
+    from UserDict import DictMixin as MappingMixin
+ModuleNotFoundError: No module named 'UserDict'
+
+Source snippets:
+--- tests/test_downloads.py lines 1-165 ---
+import os
+import time
+
+import pytest
+import mock
+from requests.structures import CaseInsensitiveDict
+
+from httpie.compat import urlopen
+from httpie.downloads import (
+    parse_content_range, filename_from_content_disposition, filename_from_url,
+    get_unique_filename, ContentRangeError, Downloader,
+)
+from utils import http, TestEnvironment
+
+
+class Response(object):
+    # noinspection PyDefaultArgument
+    def __init__(self, url, headers={}, status_code=200):
+        self.url = url
+        self.headers = CaseInsensitiveDict(headers)
+        self.status_code = status_code
+
+
+class TestDownloadUtils:
+    def test_Content_Range_parsing(self):
+        parse = parse_content_range
+
+        assert parse('bytes 100-199/200', 100) == 200
+        assert parse('bytes 100-199/*', 100) == 200
+
+        # missing
+        pytest.raises(ContentRangeError, parse, None, 100)
+
+        # syntax error
+        pytest.raises(ContentRangeError, parse, 'beers 100-199/*', 100)
+
+        # unexpected range
+        pytest.raises(ContentRangeError, parse, 'bytes 100-199/*', 99)
+
+        # invalid instance-length
+        pytest.raises(ContentRangeError, parse, 'bytes 100-199/199', 100)
+
+        # invalid byte-range-resp-spec
+        pytest.raises(ContentRangeError, parse, 'bytes 100-99/199', 100)
+
+        # invalid byte-range-resp-spec
+        pytest.raises(ContentRangeError, parse, 'bytes 100-100/*', 100)
+
+    @pytest.mark.parametrize('header, expected_filename', [
+        ('attachment; filename=hello-WORLD_123.txt', 'hello-WORLD_123.txt'),
+        ('attachment; filename=".hello-WORLD_123.txt"', 'hello-WORLD_123.txt'),
+        ('attachment; filename="white space.txt"', 'white space.txt'),
+        (r'attachment; filename="\"quotes\".txt"', '"quotes".txt'),
+        ('attachment; filename=/etc/hosts', 'hosts'),
+        ('attachment; filename=', None)
+    ])
+    def test_Content_Disposition_parsing(self, header, expected_filename):
+        assert filename_from_content_disposition(header) == expected_filename
+
+    def test_filename_from_url(self):
+        assert 'foo.txt' == filename_from_url(
+            url='http://example.org/foo',
+            content_type='text/plain'
+        )
+        assert 'foo.html' == filename_from_url(
+            url='http://example.org/foo',
+            content_type='text/html; charset=utf8'
+        )
+        assert 'foo' == filename_from_url(
+            url='http://example.org/foo',
+            content_type=None
+        )
+        assert 'foo' == filename_from_url(
+            url='http://example.org/foo',
+            content_type='x-foo/bar'
+        )
+
+    @pytest.mark.parametrize(
+        'orig_name, unique_on_attempt, expected',
+        [
+            # Simple
+            ('foo.bar', 0, 'foo.bar'),
+            ('foo.bar', 1, 'foo.bar-1'),
+            ('foo.bar', 10, 'foo.bar-10'),
+            # Trim
+            ('A' * 20, 0, 'A' * 10),
+            ('A' * 20, 1, 'A' * 8 + '-1'),
+            ('A' * 20, 10, 'A' * 7 + '-10'),
+            # Trim before ext
+            ('A' * 20 + '.txt', 0, 'A' * 6 + '.txt'),
+            ('A' * 20 + '.txt', 1, 'A' * 4 + '.txt-1'),
+            # Trim at the end
+            ('foo.' + 'A' * 20, 0, 'foo.' + 'A' * 6),
+            ('foo.' + 'A' * 20, 1, 'foo.' + 'A' * 4 + '-1'),
+            ('foo.' + 'A' * 20, 10, 'foo.' + 'A' * 3 + '-10'),
+        ]
+    )
+    @mock.patch('httpie.downloads.get_filename_max_length')
+    def test_unique_filename(self, get_filename_max_length,
+                             orig_name, unique_on_attempt,
+                             expected):
+
+        def attempts(unique_on_attempt=0):
+            # noinspection PyUnresolvedReferences,PyUnusedLocal
+            def exists(filename):
+                if exists.attempt == unique_on_attempt:
+                    return False
+                exists.attempt += 1
+                return True
+
+            exists.attempt = 0
+            return exists
+
+        get_filename_max_length.return_value = 10
+
+        actual = get_unique_filename(orig_name, attempts(unique_on_attempt))
+        assert expected == actual
+
+
+class TestDownloads:
+    # TODO: more tests
+
+    def test_actual_download(self, httpbin_both, httpbin):
+        robots_txt = '/robots.txt'
+        body = urlopen(httpbin + robots_txt).read().decode()
+        env = TestEnvironment(stdin_isatty=True, stdout_isatty=False)
+        r = http('--download', httpbin_both.url + robots_txt, env=env)
+        assert 'Downloading' in r.stderr
+        assert '[K' in r.stderr
+        assert 'Done' in r.stderr
+        assert body == r
+
+    def test_download_with_Content_Length(self, httpbin_both):
+        devnull = open(os.devnull, 'w')
+        downloader = Downloader(output_file=devnull, progress_file=devnull)
+        downloader.start(Response(
+            url=httpbin_both.url + '/',
+            headers={'Content-Length': 10}
+        ))
+        time.sleep(1.1)
+        downloader.chunk_downloaded(b'12345')
+        time.sleep(1.1)
+        downloader.chunk_downloaded(b'12345')
+        downloader.finish()
+        assert not downloader.interrupted
+
+    def test_download_no_Content_Length(self, httpbin_both):
+        devnull = open(os.devnull, 'w')
+        downloader = Downloader(output_file=devnull, progress_file=devnull)
+        downloader.start(Response(url=httpbin_both.url + '/'))
+        time.sleep(1.1)
+        downloader.chunk_downloaded(b'12345')
+        downloader.finish()
+        assert not downloader.interrupted
+
+    def test_download_interrupted(self, httpbin_both):
+        devnull = open(os.devnull, 'w')
+        downloader = Downloader(output_file=devnull, progress_file=devnull)
+        downloader.start(Response(
+            url=httpbin_both.url + '/',
+            headers={'Content-Length': 5}
+        ))
+        downloader.chunk_downloaded(b'1234')
+        downloader.finish()
+        assert downloader.interrupted
+
+--- httpie/__init__.py lines 1-27 ---
+"""
+HTTPie - a CLI, cURL-like tool for humans.
+
+"""
+__author__ = 'Jakub Roztocil'
+__version__ = '1.0.0-dev'
+__licence__ = 'BSD'
+
+
+class ExitStatus:
+    """Exit status code constants."""
+    OK = 0
+    ERROR = 1
+    ERROR_TIMEOUT = 2
+    ERROR_TOO_MANY_REDIRECTS = 6
+
+    # Used only when requested with --check-status:
+    ERROR_HTTP_3XX = 3
+    ERROR_HTTP_4XX = 4
+    ERROR_HTTP_5XX = 5
+
+
+EXIT_STATUS_LABELS = dict(
+    (value, key)
+    for key, value in ExitStatus.__dict__.items()
+    if key.isupper()
+)
+
+--- httpie/__main__.py lines 1-10 ---
+#!/usr/bin/env python
+"""The main entry point. Invoke as `http' or `python -m httpie'.
+
+"""
+import sys
+from .core import main
+
+
+if __name__ == '__main__':
+    sys.exit(main())
+
+--- httpie/cli.py lines 1-623 ---
+"""CLI arguments definition.
+
+NOTE: the CLI interface may change before reaching v1.0.
+
+"""
+from textwrap import dedent, wrap
+# noinspection PyCompatibility
+from argparse import (RawDescriptionHelpFormatter, FileType,
+                      OPTIONAL, ZERO_OR_MORE, SUPPRESS)
+
+from httpie import __doc__, __version__
+from httpie.plugins.builtin import BuiltinAuthPlugin
+from httpie.plugins import plugin_manager
+from httpie.sessions import DEFAULT_SESSIONS_DIR
+from httpie.output.formatters.colors import AVAILABLE_STYLES, DEFAULT_STYLE
+from httpie.input import (HTTPieArgumentParser,
+                          AuthCredentialsArgType, KeyValueArgType,
+                          SEP_PROXY, SEP_CREDENTIALS, SEP_GROUP_ALL_ITEMS,
+                          OUT_REQ_HEAD, OUT_REQ_BODY, OUT_RESP_HEAD,
+                          OUT_RESP_BODY, OUTPUT_OPTIONS,
+                          OUTPUT_OPTIONS_DEFAULT, PRETTY_MAP,
+                          PRETTY_STDOUT_TTY_ONLY, SessionNameValidator,
+                          readable_file_arg, SSL_VERSION_ARG_MAPPING)
+
+
+class HTTPieHelpFormatter(RawDescriptionHelpFormatter):
+    """A nicer help formatter.
+
+    Help for arguments can be indented and contain new lines.
+    It will be de-dented and arguments in the help
+    will be separated by a blank line for better readability.
+
+
+    """
+    def __init__(self, max_help_position=6, *args, **kwargs):
+        # A smaller indent for args help.
+        kwargs['max_help_position'] = max_help_position
+        super(HTTPieHelpFormatter, self).__init__(*args, **kwargs)
+
+    def _split_lines(self, text, width):
+        text = dedent(text).strip() + '\n\n'
+        return text.splitlines()
+
+parser = HTTPieArgumentParser(
+    formatter_class=HTTPieHelpFormatter,
+    description='%s <http://httpie.org>' % __doc__.strip(),
+    epilog=dedent("""
+    For every --OPTION there is also a --no-OPTION that reverts OPTION
+    to its default value.
+
+    Suggestions and bug reports are greatly appreciated:
+
+        https://github.com/jkbrzt/httpie/issues
+
+    """),
+)
+
+
+#######################################################################
+# Positional arguments.
+#######################################################################
+
+positional = parser.add_argument_group(
+    title='Positional Arguments',
+    description=dedent("""
+    These arguments come after any flags and in the order they are listed here.
+    Only URL is required.
+
+    """)
+)
+positional.add_argument(
+    'method',
+    metavar='METHOD',
+    nargs=OPTIONAL,
+    default=None,
+    help="""
+    The HTTP method to be used for the request (GET, POST, PUT, DELETE, ...).
+
+    This argument can be omitted in which case HTTPie will use POST if there
+    is some data to be sent, otherwise GET:
+
+        $ http example.org               # => GET
+        $ http example.org hello=world   # => POST
+
+    """
+)
+positional.add_argument(
+    'url',
+    metavar='URL',
+    help="""
+    The scheme defaults to 'http://' if the URL does not include one.
+
+    You can also use a shorthand for localhost
+
+        $ http :3000                    # => http://localhost:3000
+        $ http :/foo                    # => http://localhost/foo
+
+    """
+)
+positional.add_argument(
+    'items',
+    metavar='REQUEST_ITEM',
+    nargs=ZERO_OR_MORE,
+    type=KeyValueArgType(*SEP_GROUP_ALL_ITEMS),
+    help=r"""
+    Optional key-value pairs to be included in the request. The separator used
+    determines the type:
+
+    ':' HTTP headers:
+
+        Referer:http://httpie.org  Cookie:foo=bar  User-Agent:bacon/1.0
+
+    '==' URL parameters to be appended to the request URI:
+
+        search==httpie
+
+    '=' Data fields to be serialized into a JSON object (with --json, -j)
+        or form data (with --form, -f):
+
+        name=HTTPie  language=Python  description='CLI HTTP client'
+
+    ':=' Non-string JSON data fields (only with --json, -j):
+
+        awesome:=true  amount:=42  colors:='["red", "green", "blue"]'
+
+    '@' Form file fields (only with --form, -f):
+
+        cs@~/Documents/CV.pdf
+
+    '=@' A data field like '=', but takes a file path and embeds its content:
+
+         essay=@Documents/essay.txt
+
+    ':=@' A raw JSON field like ':=', but takes a file path and embeds its content:
+
+        package:=@./package.json
+
+    You can use a backslash to escape a colliding separator in the field name:
+
+        field-name-with\:colon=value
+
+    """
+)
+
+
+#######################################################################
+# Content type.
+#######################################################################
+
+content_type = parser.add_argument_group(
+    title='Predefined Content Types',
+    description=None
+)
+
+content_type.add_argument(
+    '--json', '-j',
+    action='store_true',
+    help="""
+    (default) Data items from the command line are serialized as a JSON object.
+    The Content-Type and Accept headers are set to application/json
+    (if not specified).
+
+    """
+)
+content_type.add_argument(
+    '--form', '-f',
+    action='store_true',
+    help="""
+    Data items from the command line are serialized as form fields.
+
+    The Content-Type is set to application/x-www-form-urlencoded (if not
+    specified). The presence of any file fields results in a
+    multipart/form-data request.
+
+    """
+)
+
+
+#######################################################################
+# Output processing
+#######################################################################
+
+output_processing = parser.add_argument_group(title='Output Processing')
+
+output_processing.add_argument(
+    '--pretty',
+    dest='prettify',
+    default=PRETTY_STDOUT_TTY_ONLY,
+    choices=sorted(PRETTY_MAP.keys()),
+    help="""
+    Controls output processing. The value can be "none" to not prettify
+    the output (default for redirected output), "all" to apply both colors
+    and formatting (default for terminal output), "colors", or "format".
+
+    """
+)
+output_processing.add_argument(
+    '--style', '-s',
+    dest='style',
+    metavar='STYLE',
+    default=DEFAULT_STYLE,
+    choices=AVAILABLE_STYLES,
+    help="""
+    Output coloring style (default is "{default}"). One of:
+
+{available}
+
+    For this option to work properly, please make sure that the $TERM
+    environment variable is set to "xterm-256color" or similar
+    (e.g., via `export TERM=xterm-256color' in your ~/.bashrc).
+
+    """.format(
+        default=DEFAULT_STYLE,
+        available='\n'.join(
+            '{0}{1}'.format(8*' ', line.strip())
+            for line in wrap(', '.join(sorted(AVAILABLE_STYLES)), 60)
+        ).rstrip(),
+    )
+)
+
+
+#######################################################################
+# Output options
+#######################################################################
+output_options = parser.add_argument_group(title='Output Options')
+
+output_options.add_argument(
+    '--print', '-p',
+    dest='output_options',
+    metavar='WHAT',
+    help="""
+    String specifying what the output should contain:
+
+        '{req_head}' request headers
+        '{req_body}' request body
+        '{res_head}' response headers
+        '{res_body}' response body
+
+    The default behaviour is '{default}' (i.e., the response headers and body
+    is printed), if standard output is not redirected. If the output is piped
+    to another program or to a file, then only the response body is printed
+    by default.
+
+    """
+    .format(
+        req_head=OUT_REQ_HEAD,
+        req_body=OUT_REQ_BODY,
+        res_head=OUT_RESP_HEAD,
+        res_body=OUT_RESP_BODY,
+        default=OUTPUT_OPTIONS_DEFAULT,
+    )
+)
+output_options.add_argument(
+    '--headers', '-h',
+    dest='output_options',
+    action='store_const',
+    const=OUT_RESP_HEAD,
+    help="""
+    Print only the response headers. Shortcut for --print={0}.
+
+    """
+    .format(OUT_RESP_HEAD)
+)
+output_options.add_argument(
+    '--body', '-b',
+    dest='output_options',
+    action='store_const',
+    const=OUT_RESP_BODY,
+    help="""
+    Print only the response body. Shortcut for --print={0}.
+
+    """
+    .format(OUT_RESP_BODY)
+)
+
+output_options.add_argument(
+    '--verbose', '-v',
+    dest='verbose',
+    action='store_true',
+    help="""
+    Verbose output. Print the whole request as well as the response. Also print
+    any intermediary requests/responses (such as redirects).
+    It's a shortcut for: --all --print={0}
+
+    """
+    .format(''.join(OUTPUT_OPTIONS))
+)
+output_options.add_argument(
+    '--all',
+    default=False,
+    action='store_true',
+    help="""
+    By default, only the final request/response is shown. Use this flag to show
+    any intermediary requests/responses as well. Intermediary requests include
+    followed redirects (with --follow), the first unauthorized request when
+    Digest auth is used (--auth=digest), etc.
+
+    """
+)
+output_options.add_argument(
+    '--print-others', '-P',
+    dest='output_options_others',
+    metavar='WHAT',
+    help="""
+    The same as --print, -p but applies only to intermediary requests/responses
+    (such as redirects) when their inclusion is enabled with --all. If this
+    options is not specified, then they are formatted the same way as the final
+    response.
+
+    """
+)
+output_options.add_argument(
+    '--stream', '-S',
+    action='store_true',
+    default=False,
+    help="""
+    Always stream the output by line, i.e., behave like `tail -f'.
+
+    Without --stream and with --pretty (either set or implied),
+    HTTPie fetches the whole response before it outputs the processed data.
+
+    Set this option when you want to continuously display a prettified
+    long-lived response, such as one from the Twitter streaming API.
+
+    It is useful also without --pretty: It ensures that the output is flushed
+    more often and in smaller chunks.
+
+    """
+)
+output_options.add_argument(
+    '--output', '-o',
+    type=FileType('a+b'),
+    dest='output_file',
+    metavar='FILE',
+    help="""
+    Save output to FILE instead of stdout. If --download is also set, then only
+    the response body is saved to FILE. Other parts of the HTTP exchange are
+    printed to stderr.
+
+    """
+
+)
+
+output_options.add_argument(
+    '--download', '-d',
+    action='store_true',
+    default=False,
+    help="""
+    Do not print the response body to stdout. Rather, download it and store it
+    in a file. The filename is guessed unless specified with --output
+    [filename]. This action is similar to the default behaviour of wget.
+
+    """
+)
+
+output_options.add_argument(
+    '--continue', '-c',
+    dest='download_resume',
+    action='store_true',
+    default=False,
+    help="""
+    Resume an interrupted download. Note that the --output option needs to be
+    specified as well.
+
+    """
+)
+
+
+#######################################################################
+# Sessions
+#######################################################################
+
+sessions = parser.add_argument_group(title='Sessions')\
+                 .add_mutually_exclusive_group(required=False)
+
+session_name_validator = SessionNameValidator(
+    'Session name contains invalid characters.'
+)
+
+sessions.add_argument(
+    '--session',
+    metavar='SESSION_NAME_OR_PATH',
+    type=session_name_validator,
+    help="""
+    Create, or reuse and update a session. Within a session, custom headers,
+    auth credential, as well as any cookies sent by the server persist between
+    requests.
+
+    Session files are stored in:
+
+        {session_dir}/<HOST>/<SESSION_NAME>.json.
+
+    """
+    .format(session_dir=DEFAULT_SESSIONS_DIR)
+)
+sessions.add_argument(
+    '--session-read-only',
+    metavar='SESSION_NAME_OR_PATH',
+    type=session_name_validator,
+    help="""
+    Create or read a session without updating it form the request/response
+    exchange.
+
+    """
+)
+
+#######################################################################
+# Authentication
+#######################################################################
+
+# ``requests.request`` keyword arguments.
+auth = parser.add_argument_group(title='Authentication')
+auth.add_argument(
+    '--auth', '-a',
+    metavar='USER[:PASS]',
+    type=AuthCredentialsArgType(SEP_CREDENTIALS),
+    help="""
+    If only the username is provided (-a username), HTTPie will prompt
+    for the password.
+
+    """,
+)
+
+_auth_plugins = plugin_manager.get_auth_plugins()
+auth.add_argument(
+    '--auth-type', '-A',
+    choices=[plugin.auth_type for plugin in _auth_plugins],
+    default=_auth_plugins[0].auth_type,
+    help="""
+    The authentication mechanism to be used. Defaults to "{default}".
+
+    {types}
+
+    """
+    .format(default=_auth_plugins[0].auth_type, types='\n    '.join(
+        '"{type}": {name}{package}{description}'.format(
+            type=plugin.auth_type,
+            name=plugin.name,
+            package=(
+                '' if issubclass(plugin, BuiltinAuthPlugin)
+                else ' (provided by %s)' % plugin.package_name
+            ),
+            description=(
+                '' if not plugin.description else
+                '\n      ' + ('\n      '.join(wrap(plugin.description)))
+            )
+        )
+        for plugin in _auth_plugins
+    )),
+)
+
+
+#######################################################################
+# Network
+#######################################################################
+
+network = parser.add_argument_group(title='Network')
+
+network.add_argument(
+    '--proxy',
+    default=[],
+    action='append',
+    metavar='PROTOCOL:PROXY_URL',
+    type=KeyValueArgType(SEP_PROXY),
+    help="""
+    String mapping protocol to the URL of the proxy
+    (e.g. http:http://foo.bar:3128). You can specify multiple proxies with
+    different protocols.
+
+    """
+)
+network.add_argument(
+    '--follow', '-F',
+    default=False,
+    action='store_true',
+    help="""
+    Follow 30x Location redirects.
+
+    """
+)
+
+network.add_argument(
+    '--max-redirects',
+    type=int,
+    default=30,
+    help="""
+    By default, requests have a limit of 30 redirects (works with --follow).
+
+    """
+)
+
+network.add_argument(
+    '--timeout',
+    type=float,
+    default=30,
+    metavar='SECONDS',
+    help="""
+    The connection timeout of the request in seconds. The default value is
+    30 seconds.
+
+    """
+)
+network.add_argument(
+    '--check-status',
+    default=False,
+    action='store_true',
+    help="""
+    By default, HTTPie exits with 0 when no network or other fatal errors
+    occur. This flag instructs HTTPie to also check the HTTP status code and
+    exit with an error if the status indicates one.
+
+    When the server replies with a 4xx (Client Error) or 5xx (Server Error)
+    status code, HTTPie exits with 4 or 5 respectively. If the response is a
+    3xx (Redirect) and --follow hasn't been set, then the exit status is 3.
+    Also an error message is written to stderr if stdout is redirected.
+
+    """
+)
+
+
+#######################################################################
+# SSL
+#######################################################################
+
+ssl = parser.add_argument_group(title='SSL')
+ssl.add_argument(
+    '--verify',
+    default='yes',
+    help="""
+    Set to "no" to skip checking the host's SSL certificate. You can also pass
+    the path to a CA_BUNDLE file for private certs. You can also set the
+    REQUESTS_CA_BUNDLE environment variable. Defaults to "yes".
+
+    """
+)
+ssl.add_argument(
+    '--ssl',  # TODO: Maybe something more general, such as --secure-protocol?
+    dest='ssl_version',
+    choices=list(sorted(SSL_VERSION_ARG_MAPPING.keys())),
+    help="""
+    The desired protocol version to use. This will default to
+    SSL v2.3 which will negotiate the highest protocol that both
+    the server and your installation of OpenSSL support. Available protocols
+    may vary depending on OpenSSL installation (only the supported ones
+    are shown here).
+
+    """
+)
+ssl.add_argument(
+    '--cert',
+    default=None,
+    type=readable_file_arg,
+    help="""
+    You can specify a local cert to use as client side SSL certificate.
+    This file may either contain both private key and certificate or you may
+    specify --cert-key separately.
+
+    """
+)
+
+ssl.add_argument(
+    '--cert-key',
+    default=None,
+    type=readable_file_arg,
+    help="""
+    The private key to use with SSL. Only needed if --cert is given and the
+    certificate file does not contain the private key.
+
+    """
+)
+
+#######################################################################
+# Troubleshooting
+#######################################################################
+
+troubleshooting = parser.add_argument_group(title='Troubleshooting')
+
+troubleshooting.add_argument(
+    '--ignore-stdin',
+    action='store_true',
+    default=False,
+    help="""
+    Do not attempt to read stdin.
+
+    """
+)
+troubleshooting.add_argument(
+    '--help',
+    action='help',
+    default=SUPPRESS,
+    help="""
+    Show this help message and exit.
+
+    """
+)
+troubleshooting.add_argument(
+    '--version',
+    action='version',
+    version=__version__,
+    help="""
+    Show version and exit.
+
+    """
+)
+troubleshooting.add_argument(
+    '--traceback',
+    action='store_true',
+    default=False,
+    help="""
+    Prints the exception traceback should one occur.
+
+    """
+)
+troubleshooting.add_argument(
+    '--debug',
+    action='store_true',
+    default=False,
+    help="""
+    Prints the exception traceback should one occur, as well as other
+    information useful for debugging HTTPie itself and for reporting bugs.
+
+    """
+)
+
+--- httpie/client.py lines 1-169 ---
+import json
+import sys
+from pprint import pformat
+
+import requests
+from requests.adapters import HTTPAdapter
+from requests.packages import urllib3
+
+from httpie import sessions
+from httpie import __version__
+from httpie.compat import str
+from httpie.input import SSL_VERSION_ARG_MAPPING
+from httpie.plugins import plugin_manager
+from httpie.utils import repr_dict_nice
+
+try:
+    # https://urllib3.readthedocs.org/en/latest/security.html
+    urllib3.disable_warnings()
+except AttributeError:
+    # In some rare cases, the user may have an old version of the requests
+    # or urllib3, and there is no method called "disable_warnings." In these
+    # cases, we don't need to call the method.
+    # They may get some noisy output but execution shouldn't die. Move on.
+    pass
+
+
+FORM = 'application/x-www-form-urlencoded; charset=utf-8'
+JSON = 'application/json'
+DEFAULT_UA = 'HTTPie/%s' % __version__
+
+
+class HTTPieHTTPAdapter(HTTPAdapter):
+
+    def __init__(self, ssl_version=None, **kwargs):
+        self._ssl_version = ssl_version
+        super(HTTPieHTTPAdapter, self).__init__(**kwargs)
+
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs['ssl_version'] = self._ssl_version
+        super(HTTPieHTTPAdapter, self).init_poolmanager(*args, **kwargs)
+
+
+def get_requests_session(ssl_version):
+    requests_session = requests.Session()
+    requests_session.mount(
+        'https://',
+        HTTPieHTTPAdapter(ssl_version=ssl_version)
+    )
+    for cls in plugin_manager.get_transport_plugins():
+        transport_plugin = cls()
+        requests_session.mount(prefix=transport_plugin.prefix,
+                               adapter=transport_plugin.get_adapter())
+    return requests_session
+
+
+def get_response(args, config_dir):
+    """Send the request and return a `request.Response`."""
+
+    ssl_version = None
+    if args.ssl_version:
+        ssl_version = SSL_VERSION_ARG_MAPPING[args.ssl_version]
+
+    requests_session = get_requests_session(ssl_version)
+    requests_session.max_redirects = args.max_redirects
+
+    if not args.session and not args.session_read_only:
+        kwargs = get_requests_kwargs(args)
+        if args.debug:
+            dump_request(kwargs)
+        response = requests_session.request(**kwargs)
+    else:
+        response = sessions.get_response(
+            requests_session=requests_session,
+            args=args,
+            config_dir=config_dir,
+            session_name=args.session or args.session_read_only,
+            read_only=bool(args.session_read_only),
+        )
+
+    return response
+
+
+def dump_request(kwargs):
+    sys.stderr.write('\n>>> requests.request(**%s)\n\n'
+                     % repr_dict_nice(kwargs))
+
+
+def encode_headers(headers):
+    # This allows for unicode headers which is non-standard but practical.
+    # See: https://github.com/jkbrzt/httpie/issues/212
+    return dict(
+        (name, value.encode('utf8') if isinstance(value, str) else value)
+        for name, value in headers.items()
+    )
+
+
+def get_default_headers(args):
+    default_headers = {
+        'User-Agent': DEFAULT_UA
+    }
+
+    auto_json = args.data and not args.form
+    # FIXME: Accept is set to JSON with `http url @./file.txt`.
+    if args.json or auto_json:
+        default_headers['Accept'] = 'application/json'
+        if args.json or (auto_json and args.data):
+            default_headers['Content-Type'] = JSON
+
+    elif args.form and not args.files:
+        # If sending files, `requests` will set
+        # the `Content-Type` for us.
+        default_headers['Content-Type'] = FORM
+    return default_headers
+
+
+def get_requests_kwargs(args, base_headers=None):
+    """
+    Translate our `args` into `requests.request` keyword arguments.
+
+    """
+    # Serialize JSON data, if needed.
+    data = args.data
+    auto_json = data and not args.form
+    if (args.json or auto_json) and isinstance(data, dict):
+        if data:
+            data = json.dumps(data)
+        else:
+            # We need to set data to an empty string to prevent requests
+            # from assigning an empty list to `response.request.data`.
+            data = ''
+
+    # Finalize headers.
+    headers = get_default_headers(args)
+    if base_headers:
+        headers.update(base_headers)
+    headers.update(args.headers)
+    headers = encode_headers(headers)
+
+    credentials = None
+    if args.auth:
+        auth_plugin = plugin_manager.get_auth_plugin(args.auth_type)()
+        credentials = auth_plugin.get_auth(args.auth.key, args.auth.value)
+
+    cert = None
+    if args.cert:
+        cert = args.cert
+        if args.cert_key:
+            cert = cert, args.cert_key
+
+    kwargs = {
+        'stream': True,
+        'method': args.method.lower(),
+        'url': args.url,
+        'headers': headers,
+        'data': data,
+        'verify': {
+            'yes': True,
+            'no': False
+        }.get(args.verify, args.verify),
+        'cert': cert,
+        'timeout': args.timeout,
+        'auth': credentials,
+        'proxies': dict((p.key, p.value) for p in args.proxy),
+        'files': args.files,
+        'allow_redirects': args.follow,
+        'params': args.params,
+    }
+
+    return kwargs

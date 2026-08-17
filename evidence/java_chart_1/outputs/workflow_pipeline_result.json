@@ -1,0 +1,56 @@
+{
+  "dataset": "Defects4J",
+  "language": "java",
+  "project": "Chart",
+  "bug_id": "1",
+  "mode": "clean",
+  "overall_status": "successful",
+  "successful": true,
+  "provider": "openrouter",
+  "model_name": "deepseek/deepseek-v4-flash",
+  "workspace_path": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff",
+  "candidate_report": "results/defects4j_candidate_selection.json",
+  "steps": [
+    {
+      "name": "baseline_reproduction",
+      "status": "passed",
+      "detail": ""
+    },
+    {
+      "name": "source_context",
+      "status": "passed",
+      "detail": ""
+    },
+    {
+      "name": "bug_detection",
+      "status": "passed",
+      "detail": ""
+    },
+    {
+      "name": "fix_generation",
+      "status": "passed",
+      "detail": ""
+    },
+    {
+      "name": "patch_validation",
+      "status": "passed",
+      "detail": ""
+    },
+    {
+      "name": "post_fix_evaluation",
+      "status": "passed",
+      "detail": ""
+    },
+    {
+      "name": "human_approval",
+      "status": "passed",
+      "detail": ""
+    },
+    {
+      "name": "metrics",
+      "status": "passed",
+      "detail": ""
+    }
+  ],
+  "created_at_utc": "2026-08-08T19:22:25+00:00"
+}

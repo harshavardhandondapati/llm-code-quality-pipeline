@@ -1,0 +1,67 @@
+# Final Experiment Report: httpie-1
+
+## Summary
+
+- Dataset: `BugsInPy`
+- Language: `python`
+- Project: `httpie`
+- Bug ID: `1`
+- Candidate status: `accepted`
+- Target runtime: `3.7.3`
+- Overall status: `successful`
+- Repair status: `successful_repair`
+
+## Results
+
+- Baseline failure observed: Yes
+- Bug detected: Yes
+- Detection file: `httpie/downloads.py`
+- Detection confidence: `0.82`
+- Patch applied: Yes
+- Compilation passed: Yes
+- Triggering tests passed: Yes
+- Human decision: `approved`
+- Human allows progress: Yes
+
+## Source context files
+
+- `tests/test_downloads.py`
+- `httpie/__init__.py`
+- `httpie/__main__.py`
+- `httpie/cli.py`
+- `httpie/client.py`
+- None recorded
+
+## Changed files
+
+- `httpie/downloads.py`
+- None recorded
+
+## Pipeline steps
+
+- baseline_reproduction: `passed`
+- source_context: `passed`
+- bug_detection: `passed`
+- fix_generation: `passed`
+- patch_validation: `passed`
+- post_fix_evaluation: `passed`
+- human_approval: `passed`
+- metrics: `passed`
+
+## Evidence files
+
+- `baseline_reproduction.json`: `/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/outputs/baseline_reproduction.json`
+- `source_context.json`: `/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/outputs/source_context.json`
+- `bug_detection_result.json`: `/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/outputs/bug_detection_result.json`
+- `fix_generation_result.json`: `/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/outputs/fix_generation_result.json`
+- `validation_result.json`: `/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/outputs/validation_result.json`
+- `post_fix_evaluation_result.json`: `/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/outputs/post_fix_evaluation_result.json`
+- `human_approval_decision.json`: `/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/outputs/human_approval_decision.json`
+- `evaluation_metrics.json`: `/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/outputs/evaluation_metrics.json`
+- `workflow_pipeline_result.json`: `/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/outputs/workflow_pipeline_result.json`
+
+## Execution metrics
+
+- Retry count: `0`
+- Total known execution time seconds: `1358.534`
+- Generated at UTC: `2026-08-06T14:18:20+00:00`

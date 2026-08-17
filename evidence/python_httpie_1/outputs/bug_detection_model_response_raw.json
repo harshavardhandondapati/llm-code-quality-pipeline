@@ -1,0 +1,6 @@
+{
+  "provider": "mock",
+  "model_name": "mock-model",
+  "task": "bug_detection",
+  "raw_text": "{\n  \"bug_found\": true,\n  \"file_path\": \"httpie/downloads.py\",\n  \"function_name\": \"filename_from_content_disposition\",\n  \"line_start\": null,\n  \"line_end\": null,\n  \"explanation\": \"The download filename is taken from the Content-Disposition header without keeping it inside the filesystem filename length limit.\",\n  \"confidence\": 0.82\n}"
+}

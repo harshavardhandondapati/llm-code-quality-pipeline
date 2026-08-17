@@ -1,0 +1,9 @@
+{
+  "project": "httpie",
+  "bug_id": "1",
+  "decision": "approved",
+  "reviewer": "Hari",
+  "comments": "Reviewed the generated bug analysis, patch and validation evidence.",
+  "allows_progress": true,
+  "decided_at_utc": "2026-08-06T14:18:20+00:00"
+}

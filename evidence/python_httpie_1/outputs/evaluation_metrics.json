@@ -1,0 +1,31 @@
+{
+  "dataset": "BugsInPy",
+  "language": "python",
+  "project": "httpie",
+  "bug_id": "1",
+  "candidate_status": "accepted",
+  "target_python": "3.7.3",
+  "target_runtime": "3.7.3",
+  "overall_status": "successful",
+  "baseline_failure_observed": true,
+  "detection_bug_found": true,
+  "detection_file_path": "httpie/downloads.py",
+  "detection_confidence": 0.82,
+  "patch_present": true,
+  "files_modified": [
+    "httpie/downloads.py"
+  ],
+  "repair_source": null,
+  "local_fallback_used": false,
+  "patch_applied": true,
+  "compilation_passed": true,
+  "triggering_tests_passed": true,
+  "post_fix_improved": true,
+  "repair_status": "successful_repair",
+  "human_decision": "approved",
+  "reviewer": "Hari",
+  "human_allows_progress": true,
+  "retry_count": 0,
+  "total_known_execution_time_seconds": 1358.534,
+  "failure_reason": null
+}

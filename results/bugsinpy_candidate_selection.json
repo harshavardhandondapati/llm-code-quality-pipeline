@@ -1,0 +1,15 @@
+{
+  "records": [
+    {
+      "dataset": "BugsInPy",
+      "language": "python",
+      "project": "httpie",
+      "bug_id": "1",
+      "status": "accepted",
+      "target_python": "3.7.3",
+      "target_runtime": "3.7.3",
+      "baseline_failure_observed": true,
+      "workspace_path": "evidence/python_httpie_1"
+    }
+  ]
+}

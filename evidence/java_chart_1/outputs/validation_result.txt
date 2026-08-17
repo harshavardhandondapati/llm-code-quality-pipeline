@@ -1,0 +1,8 @@
+patch_applied: True
+patch_strategy: llm_diff_search_apply
+already_applied: False
+compilation_passed: True
+triggering_tests_passed: True
+validation_scope: triggering_tests
+changed_files: []
+failure_reason: None

@@ -1,0 +1,15 @@
+{
+  "records": [
+    {
+      "dataset": "Defects4J",
+      "language": "java",
+      "project": "Chart",
+      "bug_id": "1",
+      "status": "accepted",
+      "target_python": null,
+      "target_runtime": "java",
+      "baseline_failure_observed": true,
+      "workspace_path": "evidence/java_chart_1"
+    }
+  ]
+}

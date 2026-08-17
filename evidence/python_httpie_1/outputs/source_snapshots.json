@@ -1,0 +1,8 @@
+{
+  "original": {
+    "httpie/downloads.py": "evidence/python_httpie_1/outputs/snapshots/original/httpie/downloads.py"
+  },
+  "updated": {
+    "httpie/downloads.py": "evidence/python_httpie_1/outputs/snapshots/updated/httpie/downloads.py"
+  }
+}

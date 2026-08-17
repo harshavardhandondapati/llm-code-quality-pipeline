@@ -1,0 +1,15 @@
+{
+  "dataset": "BugsInPy",
+  "language": "python",
+  "project": "httpie",
+  "bug_id": "1",
+  "baseline_failure_observed": true,
+  "patch_applied": true,
+  "compilation_passed": true,
+  "triggering_tests_passed": true,
+  "changed_files": [
+    "httpie/downloads.py"
+  ],
+  "improved": true,
+  "repair_status": "successful_repair"
+}

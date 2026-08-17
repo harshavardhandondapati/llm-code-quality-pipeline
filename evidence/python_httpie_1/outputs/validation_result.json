@@ -1,0 +1,12 @@
+{
+  "patch_applied": true,
+  "patch_strategy": "fixed_files",
+  "already_applied": false,
+  "compilation_passed": true,
+  "triggering_tests_passed": true,
+  "validation_scope": "triggering_tests",
+  "changed_files": [
+    "httpie/downloads.py"
+  ],
+  "failure_reason": null
+}

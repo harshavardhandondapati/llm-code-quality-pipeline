@@ -1,0 +1,34 @@
+{
+  "dataset": "Defects4J",
+  "language": "java",
+  "project": "Chart",
+  "bug_id": "1",
+  "candidate_status": "accepted",
+  "target_python": null,
+  "target_runtime": "java",
+  "overall_status": "successful",
+  "baseline_failure_observed": true,
+  "detection_bug_found": true,
+  "detection_file_path": "source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java",
+  "detection_confidence": 0.95,
+  "patch_present": true,
+  "files_modified": [
+    "source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java"
+  ],
+  "repair_source": null,
+  "local_fallback_used": false,
+  "patch_applied": true,
+  "compilation_passed": true,
+  "triggering_tests_passed": true,
+  "post_fix_improved": true,
+  "repair_status": "successful_repair",
+  "human_decision": "approved",
+  "reviewer": "Hari",
+  "human_allows_progress": true,
+  "retry_count": 0,
+  "total_known_execution_time_seconds": 203.451,
+  "failure_reason": null,
+  "changed_files": [
+    "source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java"
+  ]
+}

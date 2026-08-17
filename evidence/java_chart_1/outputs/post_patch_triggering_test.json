@@ -1,0 +1,14 @@
+{
+  "command": [
+    "defects4j",
+    "test",
+    "-t",
+    "org.jfree.chart.renderer.category.junit.AbstractCategoryItemRendererTests::test2947660"
+  ],
+  "working_directory": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff/repository/Chart_1_buggy",
+  "return_code": 0,
+  "stdout": "Failing tests: 0",
+  "stderr": "Running ant (compile.tests)................................................ OK\nRunning ant (run.dev.tests)................................................ OK",
+  "execution_time_seconds": 31.919694198004436,
+  "timed_out": false
+}

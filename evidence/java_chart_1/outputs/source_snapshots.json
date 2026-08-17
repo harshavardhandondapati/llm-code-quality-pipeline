@@ -1,0 +1,11 @@
+{
+  "original": {
+    "source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java": "evidence/java_chart_1/outputs/snapshots/original/source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java"
+  },
+  "updated": {
+    "source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java": "evidence/java_chart_1/outputs/snapshots/updated/source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java"
+  },
+  "benchmark_fixed": {
+    "source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java": "evidence/java_chart_1/outputs/snapshots/benchmark_fixed/source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "command": [
+    "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/tools/BugsInPy/framework/bin/bugsinpy-test"
+  ],
+  "working_directory": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/repository/httpie",
+  "return_code": 0,
+  "stdout": "pytest tests/test_downloads.py::TestDownloadUtils::test_unique_filename\nRUN EVERY COMMAND\n0\n\n\nTraceback (most recent call last):\n  File \"/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/repository/httpie/env/lib/python3.10/site-packages/_pytest/main.py\", line 12, in <module>\n    from collections import MutableMapping as MappingMixin\nImportError: cannot import name 'MutableMapping' from 'collections' (/home/harsha-1998/.pyenv/versions/3.10.20/lib/python3.10/collections/__init__.py)\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/repository/httpie/env/bin/pytest\", line 7, in <module>\n    from pytest import main\n  File \"/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/repository/httpie/env/lib/python3.10/site-packages/pytest.py\", line 21, in <module>\n    from _pytest.main import Item, Collector, File, Session\n  File \"/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538/repository/httpie/env/lib/python3.10/site-packages/_pytest/main.py\", line 14, in <module>\n    from UserDict import DictMixin as MappingMixin\nModuleNotFoundError: No module named 'UserDict'",
+  "stderr": "",
+  "execution_time_seconds": 0.6788424520000262,
+  "timed_out": false
+}

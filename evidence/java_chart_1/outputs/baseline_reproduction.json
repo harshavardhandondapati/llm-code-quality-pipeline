@@ -1,0 +1,75 @@
+{
+  "checkout": {
+    "bug_case": {
+      "dataset": "Defects4J",
+      "project": "Chart",
+      "bug_id": "1",
+      "language": "java",
+      "workspace_path": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff/repository/Chart_1_buggy",
+      "buggy_revision": null,
+      "fixed_revision": null,
+      "triggering_tests": [
+        "org.jfree.chart.renderer.category.junit.AbstractCategoryItemRendererTests::test2947660"
+      ],
+      "metadata": {
+        "tests.trigger": "org.jfree.chart.renderer.category.junit.AbstractCategoryItemRendererTests::test2947660",
+        "classes.modified": "org.jfree.chart.renderer.category.AbstractCategoryItemRenderer",
+        "classes.relevant": "org.jfree.chart.annotations.Annotation\norg.jfree.chart.annotations.CategoryAnnotation\norg.jfree.chart.axis.Axis\norg.jfree.chart.axis.AxisLocation\norg.jfree.chart.axis.CategoryAnchor\norg.jfree.chart.axis.CategoryAxis\norg.jfree.chart.axis.ValueAxis\norg.jfree.chart.ChartColor\norg.jfree.chart.entity.CategoryItemEntity\norg.jfree.chart.entity.ChartEntity\norg.jfree.chart.entity.PlotEntity\norg.jfree.chart.event.AnnotationChangeListener\norg.jfree.chart.event.AxisChangeListener\norg.jfree.chart.event.ChartChangeEvent\norg.jfree.chart.event.ChartChangeEventType\norg.jfree.chart.event.DatasetChangeInfo\norg.jfree.chart.event.MarkerChangeListener\norg.jfree.chart.event.PlotChangeEvent\norg.jfree.chart.event.RendererChangeListener\norg.jfree.chart.labels.CategoryItemLabelGenerator\norg.jfree.chart.labels.CategorySeriesLabelGenerator\norg.jfree.chart.labels.CategoryToolTipGenerator\norg.jfree.chart.labels.ItemLabelAnchor\norg.jfree.chart.labels.ItemLabelPosition\norg.jfree.chart.labels.StandardCategorySeriesLabelGenerator\norg.jfree.chart.LegendItem\norg.jfree.chart.LegendItemCollection\norg.jfree.chart.LegendItemSource\norg.jfree.chart.plot.CategoryPlot\norg.jfree.chart.plot.DatasetRenderingOrder\norg.jfree.chart.plot.DefaultDrawingSupplier\norg.jfree.chart.plot.DrawingSupplier\norg.jfree.chart.plot.Pannable\norg.jfree.chart.plot.Plot\norg.jfree.chart.plot.PlotOrientation\norg.jfree.chart.plot.Selectable\norg.jfree.chart.plot.ValueAxisPlot\norg.jfree.chart.plot.Zoomable\norg.jfree.chart.renderer.AbstractRenderer\norg.jfree.chart.renderer.category.AbstractCategoryItemRenderer\norg.jfree.chart.renderer.category.BarRenderer\norg.jfree.chart.renderer.category.CategoryItemRenderer\norg.jfree.chart.renderer.category.LineAndShapeRenderer\norg.jfree.chart.renderer.RenderAttributes\norg.jfree.chart.text.TextAnchor\norg.jfree.chart.text.TextMeasurer\norg.jfree.chart.urls.CategoryURLGenerator\norg.jfree.chart.util.AbstractObjectList\norg.jfree.chart.util.BooleanList\norg.jfree.chart.util.DefaultShadowGenerator\norg.jfree.chart.util.GradientPaintTransformer\norg.jfree.chart.util.GradientPaintTransformType\norg.jfree.chart.util.ObjectList\norg.jfree.chart.util.PaintList\norg.jfree.chart.util.PublicCloneable\norg.jfree.chart.util.RectangleInsets\norg.jfree.chart.util.ResourceBundleWrapper\norg.jfree.chart.util.ShadowGenerator\norg.jfree.chart.util.ShapeList\norg.jfree.chart.util.SortOrder\norg.jfree.chart.util.StandardGradientPaintTransformer\norg.jfree.chart.util.StrokeList\norg.jfree.chart.util.UnitType\norg.jfree.data.category.AbstractCategoryDataset\norg.jfree.data.category.CategoryDataset\norg.jfree.data.category.CategoryDatasetSelectionState\norg.jfree.data.category.DefaultCategoryDataset\norg.jfree.data.category.SelectableCategoryDataset\norg.jfree.data.event.DatasetChangeEvent\norg.jfree.data.event.DatasetChangeListener\norg.jfree.data.general.AbstractDataset\norg.jfree.data.general.Dataset\norg.jfree.data.general.DatasetGroup\norg.jfree.data.general.DatasetSelectionState\norg.jfree.data.KeyedObject\norg.jfree.data.KeyedObjects\norg.jfree.data.KeyedObjects2D\norg.jfree.data.KeyedValues2D\norg.jfree.data.SelectableValue\norg.jfree.data.UnknownKeyException\norg.jfree.data.Value\norg.jfree.data.Values2D",
+        "dir.src.classes": "source",
+        "dir.src.tests": "tests",
+        "selected_version": "buggy",
+        "changed_files": [
+          "source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java"
+        ],
+        "checkout_log": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff/logs/defects4j_checkout.json",
+        "defects4j_version": "1b"
+      }
+    },
+    "command_result": {
+      "command": [
+        "defects4j",
+        "checkout",
+        "-p",
+        "Chart",
+        "-v",
+        "1b",
+        "-w",
+        "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff/repository/Chart_1_buggy"
+      ],
+      "working_directory": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff",
+      "return_code": 0,
+      "stdout": "",
+      "stderr": "Checking out 2266 to /mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/fi OK\nInit local repository...................................................... OK\nTag post-fix revision...................................................... OK\nApply patch................................................................ OK\nRun post-checkout hook..................................................... OK\nExcluding broken/flaky tests............................................... OK\nExcluding broken/flaky tests............................................... OK\nInitialize fixed program version........................................... OK\nApply patch................................................................ OK\nInitialize buggy program version........................................... OK\nDiff 2266:2264............................................................. OK\nApply patch................................................................ OK\nTag pre-fix revision....................................................... OK\nCheck out program version: Chart-1b........................................ OK",
+      "execution_time_seconds": 162.628204121007,
+      "timed_out": false
+    },
+    "log_file": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff/logs/defects4j_checkout.json"
+  },
+  "compile_result": {
+    "command": [
+      "defects4j",
+      "compile"
+    ],
+    "working_directory": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff/repository/Chart_1_buggy",
+    "return_code": 0,
+    "stdout": "",
+    "stderr": "Running ant (compile)...................................................... OK\nRunning ant (compile.tests)................................................ OK",
+    "execution_time_seconds": 103.76157516300736,
+    "timed_out": false
+  },
+  "test_result": {
+    "command": [
+      "defects4j",
+      "test",
+      "-t",
+      "org.jfree.chart.renderer.category.junit.AbstractCategoryItemRendererTests::test2947660"
+    ],
+    "working_directory": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff/repository/Chart_1_buggy",
+    "return_code": 0,
+    "stdout": "Failing tests: 1\n  - org.jfree.chart.renderer.category.junit.AbstractCategoryItemRendererTests::test2947660",
+    "stderr": "Running ant (compile.tests)................................................ OK\nRunning ant (run.dev.tests)................................................ OK",
+    "execution_time_seconds": 36.235192131003714,
+    "timed_out": false
+  },
+  "summary_file": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff/outputs/baseline_reproduction.json"
+}

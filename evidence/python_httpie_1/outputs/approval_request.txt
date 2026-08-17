@@ -1,0 +1,31 @@
+project: httpie
+bug_id: 1
+bug_found: True
+bug_file_path: httpie/downloads.py
+bug_confidence: 0.82
+files_modified: ['httpie/downloads.py']
+patch_preview: --- a/httpie/downloads.py
++++ b/httpie/downloads.py
+@@ -36,6 +36,10 @@
+ class ContentRangeError(ValueError):
+     pass
+ 
++
++
++def get_filename_max_length():
++    return 255
+ 
+ def parse_content_range(content_range, resumed_from):
+     """
+@@ -112,7 +116,7 @@
+         # Basic sanitation.
+         filename = os.path.basename(filename).lstrip('.').strip()
+         if filename:
+-            return filename
++            return filename[:get_filename_max_length()]
+ 
+ 
+ def filename_from_url(url, content_type):
+
+validation_summary: {'patch_applied': True, 'patch_strategy': 'fixed_files', 'already_applied': False, 'compilation_passed': True, 'triggering_tests_passed': True, 'validation_scope': 'triggering_tests', 'changed_files': ['httpie/downloads.py'], 'failure_reason': None}
+required_checks: ['Confirm the detected bug matches the failing test output.', 'Check the generated patch changes only intended files.', 'Confirm post-fix tests pass before approving the result.']

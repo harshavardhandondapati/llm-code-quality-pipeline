@@ -1,0 +1,9 @@
+{
+  "bug_found": true,
+  "file_path": "httpie/downloads.py",
+  "function_name": "filename_from_content_disposition",
+  "line_start": null,
+  "line_end": null,
+  "explanation": "The download filename is taken from the Content-Disposition header without keeping it inside the filesystem filename length limit.",
+  "confidence": 0.82
+}

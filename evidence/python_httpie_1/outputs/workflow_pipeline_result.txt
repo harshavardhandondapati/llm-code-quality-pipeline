@@ -1,0 +1,24 @@
+End-to-end pipeline result
+===========================
+
+dataset: BugsInPy
+language: python
+project: httpie
+bug_id: 1
+mode: clean
+overall_status: successful
+successful: True
+provider: mock
+model_name: mock-model
+workspace_path: /mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260806_135517_20ca6538
+candidate_report: results/bugsinpy_candidate_selection.json
+steps:
+- baseline_reproduction: passed
+- source_context: passed
+- bug_detection: passed
+- fix_generation: passed
+- patch_validation: passed
+- post_fix_evaluation: passed
+- human_approval: passed
+- metrics: passed
+created_at_utc: 2026-08-06T14:18:20+00:00

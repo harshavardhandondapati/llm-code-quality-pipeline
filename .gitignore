@@ -1,0 +1,14 @@
+.env
+.venv/
+.pytest_cache/
+__pycache__/
+**/__pycache__/
+*.pyc
+workspaces/
+logs/
+interactive_reviews/
+tools/BugsInPy/
+tools/bugsinpy/
+tools/defects4j/
+tools/Defects4J/
+.DS_Store

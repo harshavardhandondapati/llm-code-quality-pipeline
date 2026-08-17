@@ -15,18 +15,35 @@ fi
 
 if [ ! -d "$TOOLS_DIR/defects4j/.git" ]; then
   rm -rf "$TOOLS_DIR/defects4j"
-  git clone --depth 1 https://github.com/rjust/defects4j.git "$TOOLS_DIR/defects4j"
+  git clone https://github.com/rjust/defects4j.git "$TOOLS_DIR/defects4j"
 else
   echo "Defects4J already exists."
 fi
 
 cd "$TOOLS_DIR/defects4j"
+
+echo "Installing Defects4J Perl dependencies..."
+cpanm --notest --installdeps .
 cpanm --notest DBI DBD::CSV JSON DateTime List::MoreUtils
+
+echo "Initialising Defects4J project repositories..."
 ./init.sh
 
-cat <<EOF
+echo "Verifying Defects4J Chart metadata..."
+"$TOOLS_DIR/defects4j/framework/bin/defects4j" info -p Chart >/tmp/defects4j_chart_info.txt
 
+echo "Verifying Defects4J available projects..."
+"$TOOLS_DIR/defects4j/framework/bin/defects4j" pids >/tmp/defects4j_pids.txt
+
+cat <<EOF2
 Benchmark tools are ready.
-BugsInPy:  $TOOLS_DIR/BugsInPy
-Defects4J: $TOOLS_DIR/defects4j
-EOF
+
+BugsInPy:
+$TOOLS_DIR/BugsInPy
+
+Defects4J:
+$TOOLS_DIR/defects4j
+
+Defects4J verification:
+$(head -20 /tmp/defects4j_chart_info.txt)
+EOF2

@@ -51,7 +51,7 @@ class MockLLMClient:
             return {
                 "bug_found": True,
                 "file_path": "httpie/downloads.py",
-                "function_name": "filename_from_content_disposition",
+                "function_name": "get_unique_filename",
                 "line_start": None,
                 "line_end": None,
                 "explanation": (
@@ -263,7 +263,9 @@ class MockLLMClient:
             else:
                 fixed = fixed[:insert_at] + helper + fixed[insert_at:]
 
-        function_index = fixed.find("def filename_from_content_disposition")
+        function_index = fixed.find("def get_unique_filename")
+        if function_index == -1:
+            function_index = fixed.find("def filename_from_content_disposition")
         if function_index == -1:
             return fixed
 

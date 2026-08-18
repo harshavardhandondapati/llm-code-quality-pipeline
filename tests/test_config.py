@@ -12,7 +12,7 @@ def test_settings_defaults_are_valid() -> None:
 
     assert settings.model_provider is ModelProvider.MOCK
     assert settings.model_name == "mock-model"
-    assert settings.test_timeout_seconds == 300
+    assert settings.test_timeout_seconds == 1200
     assert settings.human_approval_required is True
 
 

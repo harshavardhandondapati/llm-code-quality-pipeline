@@ -38,7 +38,7 @@ class BugsInPyAdapter(DatasetAdapter):
         command_runner: CommandRunner,
         *,
         executable_directory: Path | str | None = None,
-        timeout_seconds: float = 300,
+        timeout_seconds: float = 1200,
     ) -> None:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be greater than zero")

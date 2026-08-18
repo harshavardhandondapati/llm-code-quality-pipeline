@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     bugsinpy_executable_directory: Path | None = None
     defects4j_executable_directory: Path | None = None
 
-    test_timeout_seconds: int = Field(default=300, ge=1, le=86_400)
+    test_timeout_seconds: int = Field(default=1200, ge=1, le=86_400)
     max_source_characters: int = Field(default=50_000, ge=1_000)
     max_context_files: int = Field(default=5, ge=1, le=50)
     context_lines_before: int = Field(default=20, ge=0, le=500)

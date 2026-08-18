@@ -17,7 +17,7 @@ class CommandRunner:
 
     TIMEOUT_RETURN_CODE = 124
 
-    def __init__(self, default_timeout_seconds: float = 300) -> None:
+    def __init__(self, default_timeout_seconds: float = 1200) -> None:
         if default_timeout_seconds <= 0:
             raise ValueError("default_timeout_seconds must be greater than zero")
         self.default_timeout_seconds = default_timeout_seconds

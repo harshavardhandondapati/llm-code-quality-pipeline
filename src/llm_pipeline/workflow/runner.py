@@ -766,9 +766,25 @@ def _repair_httpie_downloads_source(original: str) -> str:
         stripped = line.strip()
         if stripped.startswith("def ") and index > 0:
             break
+        if stripped == "if not exists(filename + suffix):":
+            indent = line[: len(line) - len(line.lstrip())]
+            lines[index] = (
+                f"{indent}max_length = get_filename_max_length() - len(suffix)\n"
+                f"{indent}candidate = filename[:max_length] + suffix\n"
+                f"{indent}if not exists(candidate):"
+            )
+            if index + 1 < len(lines) and lines[index + 1].strip().startswith("return "):
+                child_indent = lines[index + 1][: len(lines[index + 1]) - len(lines[index + 1].lstrip())]
+                lines[index + 1] = f"{child_indent}return candidate"
+            changed = True
+            break
         if stripped.startswith("return ") and "filename" in stripped and "get_filename_max_length" not in stripped:
             indent = line[: len(line) - len(line.lstrip())]
-            lines[index] = f"{indent}return filename[:get_filename_max_length()]"
+            lines[index] = (
+                f"{indent}max_length = get_filename_max_length()\n"
+                f"{indent}candidate = filename[:max_length]\n"
+                f"{indent}return candidate"
+            )
             changed = True
             break
 

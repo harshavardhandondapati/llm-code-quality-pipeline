@@ -131,7 +131,8 @@ def test_mock_httpie_fix_reads_project_file_when_available(tmp_path):
     assert response.content["patch"]
     fixed = response.content["fixed_files"]["httpie/downloads.py"]
     assert "def get_filename_max_length" in fixed
-    assert "return filename[:get_filename_max_length()]" in fixed
+    assert "candidate = filename[:max_length" in fixed
+    assert "return candidate" in fixed
 
 
 def test_real_llm_prompt_uses_benchmark_guidance():

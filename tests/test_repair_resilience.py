@@ -42,4 +42,5 @@ def test_httpie_source_repair_targets_return_filename():
     original = "def filename_from_content_disposition(value):\n    filename = 'x.txt'\n    return filename\n"
     fixed = _repair_httpie_downloads_source(original)
     assert "def get_filename_max_length" in fixed
-    assert "return filename[:get_filename_max_length()]" in fixed
+    assert "candidate = filename[:max_length" in fixed
+    assert "return candidate" in fixed

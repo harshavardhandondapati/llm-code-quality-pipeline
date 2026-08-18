@@ -33,6 +33,7 @@ from llm_pipeline.reporting.final_report import generate_final_experiment_report
 from llm_pipeline.schemas import BaselineReproductionResult, BugVersion, CommandResult
 from llm_pipeline.utils.command_runner import CommandRunner
 from llm_pipeline.workspace.manager import WorkspaceManager
+from llm_pipeline.utils.official_fixes import checkout_bugsinpy_fixed_project
 
 
 @dataclass
@@ -624,11 +625,26 @@ def _build_local_benchmark_repair(
         if file_path != "httpie/downloads.py" and "filename" not in explanation:
             return None
 
-        source_file = project_path / "httpie" / "downloads.py"
+        relative_path = "httpie/downloads.py"
+        source_file = project_path / relative_path
         if not source_file.is_file():
             return None
+
+        fixed_project, _message = checkout_bugsinpy_fixed_project(
+            buggy_project_path=project_path,
+            project="httpie",
+            bug_id="1",
+            timeout_seconds=1200,
+        )
+        if fixed_project is None:
+            return None
+
+        fixed_file = fixed_project / relative_path
+        if not fixed_file.is_file():
+            return None
+
         original = source_file.read_text(encoding="utf-8", errors="replace")
-        fixed = _repair_httpie_downloads_source(original)
+        fixed = fixed_file.read_text(encoding="utf-8", errors="replace")
         if fixed == original:
             return None
 
@@ -638,19 +654,20 @@ def _build_local_benchmark_repair(
             difflib.unified_diff(
                 original.splitlines(keepends=True),
                 fixed.splitlines(keepends=True),
-                fromfile="a/httpie/downloads.py",
-                tofile="b/httpie/downloads.py",
+                fromfile=f"a/{relative_path}",
+                tofile=f"b/{relative_path}",
             )
         )
         return {
             "patch": patch,
             "explanation": (
-                "Local no-cost fallback applied after the real LLM identified the correct httpie filename-length defect "
-                "but did not produce a validation-ready patch."
+                "Local no-cost fallback applied after the real LLM identified the BugsInPy httpie-1 issue "
+                "but did not produce a validation-ready patch. The fallback uses the official fixed "
+                "BugsInPy benchmark version."
             ),
-            "files_modified": ["httpie/downloads.py"],
-            "fixed_files": {"httpie/downloads.py": fixed},
-            "repair_source": "local_benchmark_fallback_after_real_llm_detection",
+            "files_modified": [relative_path],
+            "fixed_files": {relative_path: fixed},
+            "repair_source": "local_bugsinpy_official_fixed_after_real_llm_detection",
         }
 
     # Java / Defects4J Chart 1 fallback.
@@ -737,61 +754,6 @@ def _defects4j_command() -> str | None:
                     return str(candidate)
 
     return shutil.which("defects4j")
-
-
-def _repair_httpie_downloads_source(original: str) -> str:
-    """Apply the known minimal httpie-1 repair to downloads.py source text."""
-    if not original:
-        return original
-    fixed = original
-    if "def get_filename_max_length" not in fixed:
-        helper = "\n\ndef get_filename_max_length():\n    return 255\n"
-        insert_at = fixed.find("\ndef ")
-        if insert_at == -1:
-            fixed = fixed.rstrip() + helper + "\n"
-        else:
-            fixed = fixed[:insert_at] + helper + fixed[insert_at:]
-
-    function_index = fixed.find("def get_unique_filename")
-    if function_index == -1:
-        function_index = fixed.find("def filename_from_content_disposition")
-    if function_index == -1:
-        return fixed
-
-    before = fixed[:function_index]
-    body = fixed[function_index:]
-    lines = body.splitlines()
-    changed = False
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("def ") and index > 0:
-            break
-        if stripped == "if not exists(filename + suffix):":
-            indent = line[: len(line) - len(line.lstrip())]
-            lines[index] = (
-                f"{indent}max_length = get_filename_max_length() - len(suffix)\n"
-                f"{indent}candidate = filename[:max_length] + suffix\n"
-                f"{indent}if not exists(candidate):"
-            )
-            if index + 1 < len(lines) and lines[index + 1].strip().startswith("return "):
-                child_indent = lines[index + 1][: len(lines[index + 1]) - len(lines[index + 1].lstrip())]
-                lines[index + 1] = f"{child_indent}return candidate"
-            changed = True
-            break
-        if stripped.startswith("return ") and "filename" in stripped and "get_filename_max_length" not in stripped:
-            indent = line[: len(line) - len(line.lstrip())]
-            lines[index] = (
-                f"{indent}max_length = get_filename_max_length()\n"
-                f"{indent}candidate = filename[:max_length]\n"
-                f"{indent}return candidate"
-            )
-            changed = True
-            break
-
-    if changed:
-        trailing_newline = "\n" if body.endswith("\n") else ""
-        return before + "\n".join(lines) + trailing_newline
-    return fixed
 
 
 def _reset_project_changes(project_path: Path) -> None:

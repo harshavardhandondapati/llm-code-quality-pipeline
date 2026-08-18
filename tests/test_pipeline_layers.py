@@ -8,6 +8,41 @@ from llm_pipeline.prompts import build_bug_detection_prompt, build_fix_generatio
 from llm_pipeline.ui.interactive_review import review_python_source, write_interactive_review_artifacts
 
 
+def _write_fake_bugsinpy_checkout(tmp_path: Path) -> Path:
+    bin_dir = tmp_path / "fake_bugsinpy"
+    bin_dir.mkdir(parents=True)
+    script = bin_dir / "bugsinpy-checkout"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "args = sys.argv[1:]\n"
+        "work = Path(args[args.index('-w') + 1])\n"
+        "project = args[args.index('-p') + 1]\n"
+        "target = work / project / 'httpie'\n"
+        "target.mkdir(parents=True, exist_ok=True)\n"
+        "(target / 'downloads.py').write_text(\n"
+        "    'import errno\\nimport os\\n\\n'\n"
+        "    'def get_unique_filename(filename, exists=os.path.exists):\\n'\n"
+        "    '    attempt = 0\\n'\n"
+        "    '    while True:\\n'\n"
+        "    '        suffix = \"-\" + str(attempt) if attempt > 0 else \"\"\\n'\n"
+        "    '        try:\\n'\n"
+        "    '            candidate = filename + suffix\\n'\n"
+        "    '            if not exists(candidate):\\n'\n"
+        "    '                return candidate\\n'\n"
+        "    '        except OSError as e:\\n'\n"
+        "    '            if e.errno != errno.ENAMETOOLONG:\\n'\n"
+        "    '                raise\\n'\n"
+        "    '            filename = filename[:-1]\\n'\n"
+        "    '        attempt += 1\\n',\n"
+        "    encoding='utf-8',\n"
+        ")\n"
+    )
+    script.chmod(0o755)
+    return bin_dir
+
+
 def test_prompt_and_mock_detection(tmp_path):
     context = {
         "project": "httpie",
@@ -36,7 +71,13 @@ def test_prompt_and_mock_detection(tmp_path):
     assert (tmp_path / "bug_detection_result.json").exists()
 
 
-def test_mock_fix_generation_contains_fixed_file(tmp_path):
+def test_mock_fix_generation_contains_fixed_file(tmp_path, monkeypatch):
+    project = tmp_path / "httpie_project"
+    source = project / "httpie" / "downloads.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("import os\n\ndef get_unique_filename(filename, exists=os.path.exists):\n    return filename\n", encoding="utf-8")
+    monkeypatch.setenv("PIPELINE_BUGSINPY_EXECUTABLE_DIRECTORY", str(_write_fake_bugsinpy_checkout(tmp_path)))
+
     context = {
         "project": "httpie",
         "bug_id": "1",
@@ -54,8 +95,9 @@ def test_mock_fix_generation_contains_fixed_file(tmp_path):
     }
     detection = {"bug_found": True, "file_path": "httpie/downloads.py", "explanation": "long filename"}
     prompt = build_fix_generation_prompt(context, detection)
+    prompt.setdefault("metadata", {})["project_path"] = str(project)
     response = MockLLMClient().complete(prompt)
-    assert "get_filename_max_length" in response.content["patch"]
+    assert "except OSError" in response.content["patch"]
     assert "httpie/downloads.py" in response.content["fixed_files"]
 
 
@@ -109,7 +151,7 @@ def test_baseline_failed_detects_attribute_error_with_zero_exit(tmp_path):
     assert _baseline_failed(result) is True
 
 
-def test_mock_httpie_fix_reads_project_file_when_available(tmp_path):
+def test_mock_httpie_fix_reads_project_file_when_available(tmp_path, monkeypatch):
     project = tmp_path / "httpie_project"
     source = project / "httpie" / "downloads.py"
     source.parent.mkdir(parents=True)
@@ -120,18 +162,21 @@ def test_mock_httpie_fix_reads_project_file_when_available(tmp_path):
         encoding="utf-8",
     )
 
+    monkeypatch.setenv("PIPELINE_BUGSINPY_EXECUTABLE_DIRECTORY", str(_write_fake_bugsinpy_checkout(tmp_path)))
+
     prompt = {
         "task": "fix_generation",
-        "metadata": {"project": "httpie", "project_path": str(project)},
+        "metadata": {"project": "httpie", "bug_id": "1", "project_path": str(project)},
         "messages": [{"role": "user", "content": "Affected file: httpie/downloads.py"}],
     }
 
     response = MockLLMClient().complete(prompt)
 
     assert response.content["patch"]
+    assert response.content["repair_source"] == "mock_bugsinpy_official_fixed_version"
     fixed = response.content["fixed_files"]["httpie/downloads.py"]
-    assert "def get_filename_max_length" in fixed
-    assert "candidate = filename[:max_length" in fixed
+    assert "except OSError" in fixed
+    assert "ENAMETOOLONG" in fixed
     assert "return candidate" in fixed
 
 

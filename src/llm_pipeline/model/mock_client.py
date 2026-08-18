@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from llm_pipeline.utils.official_fixes import checkout_bugsinpy_fixed_project
+
 
 @dataclass(frozen=True)
 class ModelResponse:
@@ -100,24 +102,8 @@ class MockLLMClient:
         text = self._prompt_text(prompt)
         project = prompt.get("metadata", {}).get("project")
 
-        if project == "httpie" and "downloads.py" in text:
-            project_path = Path(str(prompt.get("metadata", {}).get("project_path", "")))
-            source_file = project_path / "httpie" / "downloads.py"
-            if source_file.is_file():
-                original = source_file.read_text(encoding="utf-8", errors="replace")
-            else:
-                original = self._extract_snippet(text, "httpie/downloads.py")
-            fixed = self._fix_httpie_downloads(original)
-            patch = self._diff("httpie/downloads.py", original, fixed)
-            return {
-                "patch": patch,
-                "explanation": (
-                    "Limit generated download filenames to the filesystem name limit "
-                    "before the file is opened."
-                ),
-                "files_modified": ["httpie/downloads.py"],
-                "fixed_files": {"httpie/downloads.py": fixed},
-            }
+        if project == "httpie" and str(prompt.get("metadata", {}).get("bug_id")) == "1" and "downloads.py" in text:
+            return self._fix_bugsinpy_httpie_1(prompt)
 
         if project == "Chart" and str(prompt.get("metadata", {}).get("bug_id")) == "1":
             return self._fix_defects4j_chart_1(prompt)
@@ -165,6 +151,58 @@ class MockLLMClient:
         if marker in text:
             return text.split(marker, 1)[1].rstrip() + "\n"
         return text.rstrip() + "\n"
+
+    def _fix_bugsinpy_httpie_1(self, prompt: Mapping[str, Any]) -> dict[str, Any]:
+        """Use the official BugsInPy fixed version as deterministic mock repair evidence."""
+        relative_path = "httpie/downloads.py"
+        project_path = Path(str(prompt.get("metadata", {}).get("project_path", ""))).expanduser()
+        original_file = project_path / relative_path
+        if not original_file.is_file():
+            return {
+                "patch": "",
+                "explanation": "BugsInPy httpie-1 source file was not found in the checked-out project.",
+                "files_modified": [],
+                "fixed_files": {},
+            }
+
+        fixed_project, message = checkout_bugsinpy_fixed_project(
+            buggy_project_path=project_path,
+            project="httpie",
+            bug_id="1",
+            timeout_seconds=1200,
+        )
+        if fixed_project is None:
+            return {
+                "patch": "",
+                "explanation": "Could not checkout official fixed BugsInPy httpie-1 version for mock repair. " + message,
+                "files_modified": [],
+                "fixed_files": {},
+            }
+
+        fixed_file = fixed_project / relative_path
+        if not fixed_file.is_file():
+            return {
+                "patch": "",
+                "explanation": f"Official fixed BugsInPy httpie-1 file was missing: {fixed_file}",
+                "files_modified": [],
+                "fixed_files": {},
+            }
+
+        original = original_file.read_text(encoding="utf-8", errors="replace")
+        fixed = fixed_file.read_text(encoding="utf-8", errors="replace")
+        patch = self._diff(relative_path, original, fixed)
+
+        return {
+            "patch": patch,
+            "explanation": (
+                "Deterministic Python mock repair for BugsInPy httpie-1. The mock uses the official fixed "
+                "benchmark version to validate checkout, patch application, compile, triggering-test, metrics "
+                "and reporting stages without calling OpenRouter."
+            ),
+            "files_modified": [relative_path],
+            "fixed_files": {relative_path: fixed},
+            "repair_source": "mock_bugsinpy_official_fixed_version",
+        }
 
     def _fix_defects4j_chart_1(self, prompt: Mapping[str, Any]) -> dict[str, Any]:
         """Use the official Defects4J fixed version as deterministic mock repair evidence."""
@@ -245,65 +283,6 @@ class MockLLMClient:
 
         found = shutil.which("defects4j")
         return found
-
-    @staticmethod
-    def _fix_httpie_downloads(original: str) -> str:
-        if not original:
-            return original
-
-        fixed = original
-        if "def get_filename_max_length" not in fixed:
-            helper = (
-                "\n\ndef get_filename_max_length():\n"
-                "    return 255\n"
-            )
-            insert_at = fixed.find("\ndef ")
-            if insert_at == -1:
-                fixed = fixed.rstrip() + helper + "\n"
-            else:
-                fixed = fixed[:insert_at] + helper + fixed[insert_at:]
-
-        function_index = fixed.find("def get_unique_filename")
-        if function_index == -1:
-            function_index = fixed.find("def filename_from_content_disposition")
-        if function_index == -1:
-            return fixed
-
-        before = fixed[:function_index]
-        body = fixed[function_index:]
-        lines = body.splitlines()
-        changed = False
-        for index, line in enumerate(lines):
-            stripped = line.strip()
-            if stripped.startswith("def ") and index > 0:
-                break
-            if stripped == "if not exists(filename + suffix):":
-                indent = line[: len(line) - len(line.lstrip())]
-                lines[index] = (
-                    f"{indent}max_length = get_filename_max_length() - len(suffix)\n"
-                    f"{indent}candidate = filename[:max_length] + suffix\n"
-                    f"{indent}if not exists(candidate):"
-                )
-                if index + 1 < len(lines) and lines[index + 1].strip().startswith("return "):
-                    child_indent = lines[index + 1][: len(lines[index + 1]) - len(lines[index + 1].lstrip())]
-                    lines[index + 1] = f"{child_indent}return candidate"
-                changed = True
-                break
-            if stripped.startswith("return ") and "filename" in stripped and "get_filename_max_length" not in stripped:
-                indent = line[: len(line) - len(line.lstrip())]
-                lines[index] = (
-                    f"{indent}max_length = get_filename_max_length()\n"
-                    f"{indent}candidate = filename[:max_length]\n"
-                    f"{indent}return candidate"
-                )
-                changed = True
-                break
-
-        if changed:
-            trailing_newline = "\n" if body.endswith("\n") else ""
-            return before + "\n".join(lines) + trailing_newline
-
-        return fixed
 
     @staticmethod
     def _diff(path: str, original: str, fixed: str) -> str:

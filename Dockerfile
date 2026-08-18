@@ -47,8 +47,10 @@ ENV PATH=/opt/pyenv/bin:/opt/pyenv/shims:$PATH
 
 RUN git clone --depth 1 https://github.com/pyenv/pyenv.git /opt/pyenv \
     && pyenv install -s 3.10.20 \
-    && pyenv global 3.10.20 \
+    && pyenv install -s 3.7.3 \
+    && pyenv global 3.10.20 3.7.3 \
     && python --version \
+    && python3.7 --version \
     && pip --version
 
 COPY pyproject.toml README.md requirements.txt UI_REQUIREMENTS.txt ./

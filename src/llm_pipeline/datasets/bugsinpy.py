@@ -131,6 +131,7 @@ class BugsInPyAdapter(DatasetAdapter):
             )
 
         metadata = self.read_metadata(project_path)
+        self._write_pyenv_version(project_path, metadata.get("python_version"))
         changed_files = self._read_semicolon_file(
             project_path / "bugsinpy_patchfile.info"
         )
@@ -244,6 +245,16 @@ class BugsInPyAdapter(DatasetAdapter):
                 metadata[clean_key] = clean_value
 
         return metadata
+
+    @staticmethod
+    def _write_pyenv_version(project_path: Path, python_version: str | None) -> None:
+        """Use the Python version requested by BugsInPy metadata when pyenv is available."""
+        version = (python_version or "").strip()
+        if not version:
+            return
+        if not re.fullmatch(r"\d+\.\d+(\.\d+)?", version):
+            return
+        (project_path / ".python-version").write_text(version + "\n", encoding="utf-8")
 
     def _run_project_command(
         self,

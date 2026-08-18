@@ -30,7 +30,7 @@ from llm_pipeline.prompts.builder import (
     save_prompt,
 )
 from llm_pipeline.reporting.final_report import generate_final_experiment_report
-from llm_pipeline.schemas import BaselineReproductionResult, CommandResult
+from llm_pipeline.schemas import BaselineReproductionResult, BugVersion, CommandResult
 from llm_pipeline.utils.command_runner import CommandRunner
 from llm_pipeline.workspace.manager import WorkspaceManager
 
@@ -243,6 +243,18 @@ def run_final_pipeline(
     save_model_outputs(fix_response, workspace.outputs, "fix_generation")
     steps.append(Step("fix_generation", "passed" if _fix_contains_change(fix_response.content) else "failed"))
 
+    comparison_files = _candidate_snapshot_files(
+        checkout=checkout,
+        bug_detection=bug_response.content,
+        fix_result=fix_response.content,
+    )
+    _save_project_snapshots(
+        outputs=workspace.outputs,
+        stage="original",
+        project_root=checkout.bug_case.workspace_path,
+        files=comparison_files,
+    )
+
     validation = apply_generated_patch(
         checkout=checkout,
         fix_result=fix_response.content,
@@ -324,6 +336,27 @@ def run_final_pipeline(
                 and validation.get("triggering_tests_passed")
             )
 
+    comparison_files = _candidate_snapshot_files(
+        checkout=checkout,
+        bug_detection=bug_response.content,
+        fix_result=fix_response.content,
+        validation=validation,
+    )
+    _save_project_snapshots(
+        outputs=workspace.outputs,
+        stage="updated",
+        project_root=checkout.bug_case.workspace_path,
+        files=comparison_files,
+    )
+    _save_benchmark_fixed_snapshots(
+        dataset=selected_dataset,
+        project=project,
+        bug_id=bug_id,
+        workspace=workspace,
+        outputs=workspace.outputs,
+        files=comparison_files,
+    )
+
     steps.append(Step("patch_validation", "passed" if validation_ok else "failed"))
 
     post_fix = create_post_fix_evaluation(candidate_record=record, validation=validation, outputs_dir=workspace.outputs)
@@ -363,6 +396,155 @@ def run_final_pipeline(
 
     generate_final_experiment_report(candidate_report_path=candidate_report)
     return result
+
+
+
+def _candidate_snapshot_files(
+    *,
+    checkout: Any,
+    bug_detection: Mapping[str, Any] | None = None,
+    fix_result: Mapping[str, Any] | None = None,
+    validation: Mapping[str, Any] | None = None,
+) -> list[str]:
+    """Return source files that should be captured for comparison evidence."""
+    files: list[str] = []
+
+    def add(value: Any) -> None:
+        text = str(value or "").strip().replace("\\", "/")
+        while text.startswith("./"):
+            text = text[2:]
+        if text.startswith("a/") or text.startswith("b/"):
+            text = text[2:]
+        if text and text not in files:
+            files.append(text)
+
+    metadata = getattr(checkout.bug_case, "metadata", {}) or {}
+    changed_files = metadata.get("changed_files") or []
+    if isinstance(changed_files, str):
+        changed_files = [changed_files]
+    for item in changed_files:
+        add(item)
+
+    if bug_detection:
+        add(bug_detection.get("file_path"))
+
+    for payload in (fix_result or {}, validation or {}):
+        for key in ("files_modified", "changed_files"):
+            value = payload.get(key) if isinstance(payload, Mapping) else None
+            if isinstance(value, list):
+                for item in value:
+                    add(item)
+            elif value:
+                add(value)
+        fixed_files = payload.get("fixed_files") if isinstance(payload, Mapping) else None
+        if isinstance(fixed_files, Mapping):
+            for item in fixed_files.keys():
+                add(item)
+
+    focused = _initial_focused_file(checkout)
+    if focused:
+        add(focused)
+
+    root = checkout.bug_case.workspace_path
+    return [item for item in files if (root / item).is_file()]
+
+
+def _save_project_snapshots(
+    *,
+    outputs: Path,
+    stage: str,
+    project_root: Path,
+    files: list[str],
+) -> None:
+    """Save full source files for before/after UI comparison."""
+    for relative in files:
+        source = project_root / relative
+        if not source.is_file():
+            continue
+        target = outputs / "snapshots" / stage / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+
+
+def _save_benchmark_fixed_snapshots(
+    *,
+    dataset: str,
+    project: str,
+    bug_id: str,
+    workspace: Any,
+    outputs: Path,
+    files: list[str],
+) -> None:
+    """Save the benchmark's official fixed files after LLM validation.
+
+    These files are captured only as post-run comparison evidence. They are not
+    included in any prompt and are not used for patch generation.
+    """
+    if not files:
+        return
+
+    fixed_root = workspace.repository / f"_benchmark_fixed_{dataset}_{project}_{bug_id}"
+    try:
+        if dataset == "defects4j":
+            defects4j = _defects4j_command()
+            if not defects4j:
+                return
+            if not fixed_root.exists():
+                subprocess.run(
+                    [defects4j, "checkout", "-p", project, "-v", BugVersion.FIXED.defects4j_value(bug_id), "-w", str(fixed_root)],
+                    cwd=workspace.root,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    timeout=1200,
+                    check=False,
+                )
+            _save_project_snapshots(outputs=outputs, stage="benchmark_fixed", project_root=fixed_root, files=files)
+            return
+
+        if dataset == "bugsinpy":
+            bugsinpy = _bugsinpy_command("bugsinpy-checkout")
+            if not bugsinpy:
+                return
+            fixed_parent = workspace.repository / f"_benchmark_fixed_{dataset}_{project}_{bug_id}_parent"
+            fixed_project = fixed_parent / project
+            if not fixed_project.exists():
+                fixed_parent.mkdir(parents=True, exist_ok=True)
+                subprocess.run(
+                    [bugsinpy, "-p", project, "-i", str(bug_id), "-v", BugVersion.FIXED.bugsinpy_value, "-w", str(fixed_parent)],
+                    cwd=workspace.root,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    timeout=1200,
+                    check=False,
+                )
+            _save_project_snapshots(outputs=outputs, stage="benchmark_fixed", project_root=fixed_project, files=files)
+    except Exception as error:  # pragma: no cover - evidence helper must not break pipeline
+        (outputs / "benchmark_fixed_snapshot_error.txt").write_text(str(error), encoding="utf-8")
+
+
+def _bugsinpy_command(command_name: str) -> str | None:
+    """Resolve a BugsInPy executable from environment, .env, or PATH."""
+    import os
+    import shutil
+
+    configured_dir = os.environ.get("PIPELINE_BUGSINPY_EXECUTABLE_DIRECTORY", "").strip()
+    if configured_dir:
+        candidate = Path(configured_dir) / command_name
+        if candidate.exists():
+            return str(candidate)
+
+    env_file = Path(".env")
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("PIPELINE_BUGSINPY_EXECUTABLE_DIRECTORY="):
+                value = line.split("=", 1)[1].strip().strip('"').strip("'")
+                candidate = Path(value) / command_name
+                if candidate.exists():
+                    return str(candidate)
+
+    return shutil.which(command_name)
 
 
 def _initial_focused_file(checkout: Any) -> str | None:

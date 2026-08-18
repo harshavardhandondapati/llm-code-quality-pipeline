@@ -9,7 +9,8 @@
       "target_python": null,
       "target_runtime": "java",
       "baseline_failure_observed": true,
-      "workspace_path": "evidence/java_chart_1"
+      "workspace_path": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/cloud/llm-code-quality-pipeline-cloud-runner/workspaces/run_20260818_144120_cc868d19",
+      "project_path": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/cloud/llm-code-quality-pipeline-cloud-runner/workspaces/run_20260818_144120_cc868d19/repository/Chart_1_buggy"
     }
   ]
 }

@@ -1,47 +1,51 @@
 # LLM Code Quality Pipeline
 
-This repository contains a dissertation implementation for an LLM-assisted code quality pipeline. It supports a validated Python repair case from BugsInPy and a validated Java repair case from Defects4J.
+This repository contains a dissertation implementation for an LLM-assisted code quality pipeline. It supports Python bugs from BugsInPy and Java bugs from Defects4J. The same pipeline can be run locally or from the deployed Streamlit app.
 
-The pipeline records every run as file-based evidence. The Streamlit app loads those evidence files and presents the result in a simple review dashboard.
+The pipeline records each run as evidence: original buggy file, LLM-updated file, optional benchmark fixed reference, prompts, model responses, patch diff, validation result, metrics and final report.
 
-## Final validated examples
+## Validated examples included
 
 | Language | Dataset | Project | Bug | Provider | Result |
 | --- | --- | --- | --- | --- | --- |
 | Python | BugsInPy | httpie | 1 | OpenRouter / DeepSeek | successful |
 | Java | Defects4J | Chart | 1 | OpenRouter / DeepSeek | successful |
 
-The Java final evidence has `local_fallback_used: false`, so the validated patch came from the LLM response and was not copied from the official Defects4J fixed version.
+The Java evidence has `local_fallback_used: false`. That means the validated patch came from the LLM response, not from copied benchmark fixed code.
 
 ## What the pipeline does
 
-1. Checks out a benchmark bug.
-2. Reproduces the original failing test.
-3. Builds source-code context for the LLM.
-4. Asks the LLM to locate the issue.
-5. Asks the LLM to generate a patch.
-6. Saves the original buggy file before patching.
+1. Checks out the selected benchmark bug.
+2. Reproduces the baseline failure.
+3. Saves the original buggy source file before patching.
+4. Builds source-code context for the selected LLM.
+5. Asks the LLM to locate the issue.
+6. Asks the LLM to generate a patch.
 7. Applies the generated patch.
-8. Saves the updated file after patching.
+8. Saves the updated source file after patching.
 9. Runs compile and targeted validation tests.
-10. Writes JSON, text, diff and HTML evidence.
+10. Saves the benchmark fixed file separately as reference evidence where available.
+11. Writes JSON, text, diff and HTML evidence.
+
+The official benchmark fixed file is captured only after the LLM repair/validation path. It is not sent to the LLM prompt and is not used to generate the patch when fallback is disabled.
 
 ## Main folders
 
 ```text
 src/llm_pipeline/      pipeline source code
-scripts/               setup, verification and run commands
+scripts/               setup, verification, command-line and background-job scripts
 tests/                 automated tests
 results/               candidate reports used by the UI
 evidence/              compact final evidence for deployment and review
 app.py                 Streamlit dashboard
+Dockerfile             Render/Docker deployment definition
 ```
 
-Generated runtime folders such as `.venv`, `workspaces`, caches, logs and API keys are not part of the clean submission package.
+Generated runtime folders such as `.venv`, `workspaces`, `jobs`, caches, logs and API keys are not part of the clean submission package.
 
 ## Benchmark tools layout
 
-Local and cloud runs use the same clear tools structure:
+Local and cloud runs use this structure:
 
 ```text
 tools/
@@ -49,7 +53,7 @@ tools/
   defects4j/
 ```
 
-The ZIP includes the tool folder placeholder and the installer script, not the full cloned tool repositories. During Docker/Render deployment, `scripts/prepare_benchmark_tools.sh` installs BugsInPy and Defects4J into `/app/tools`. The app then discovers available projects and bug IDs from those installed tools.
+The ZIP includes the tool folder placeholder and installer script, not the full cloned benchmark repositories. During Docker/Render deployment, `scripts/prepare_benchmark_tools.sh` installs BugsInPy and Defects4J into `/app/tools`. The app then discovers available projects and bug IDs from those installed tools.
 
 ## Setup locally
 
@@ -93,19 +97,36 @@ Open:
 http://localhost:8501
 ```
 
-Use the dropdown to select either:
+The dashboard has four tabs:
 
 ```text
-Python — BugsInPy httpie-1
-Java — Defects4J Chart-1
+Run Summary       review saved evidence
+Code Comparison   compare original, LLM-updated and benchmark fixed source
+Run Benchmark     start new background benchmark jobs
+File Review       lightweight single-file review
 ```
 
-## Run the Python pipeline
+## Run a benchmark from the web app
 
-Mock provider:
+Use the **Run Benchmark** tab.
+
+1. Select dataset: BugsInPy or Defects4J.
+2. Select project and bug ID from the discovered metadata.
+3. Select provider: mock or OpenRouter.
+4. Enter the model ID. For OpenRouter, any valid OpenRouter model ID can be entered.
+5. Keep **Disable local fallback** enabled for final evidence.
+6. Click **Start benchmark run**.
+7. Use **Refresh status** while the job runs.
+8. When successful, click **Load this run in review tabs**.
+
+Runs execute in a background process so the browser does not need to remain blocked during checkout, dependency setup, LLM calls and validation.
+
+## Command-line examples
+
+Python / BugsInPy with mock provider:
 
 ```bash
-python scripts/run_pipeline.py \
+PIPELINE_ALLOW_LOCAL_FALLBACK=false python scripts/run_pipeline.py \
   --dataset bugsinpy \
   --project httpie \
   --bug-id 1 \
@@ -114,7 +135,7 @@ python scripts/run_pipeline.py \
   --reviewer Hari
 ```
 
-Real LLM provider:
+Python / BugsInPy with OpenRouter:
 
 ```bash
 PIPELINE_ALLOW_LOCAL_FALLBACK=false python scripts/run_pipeline.py \
@@ -127,15 +148,7 @@ PIPELINE_ALLOW_LOCAL_FALLBACK=false python scripts/run_pipeline.py \
   --reviewer Hari
 ```
 
-## Run the Java pipeline
-
-Install Java/JDK and Defects4J first, then verify:
-
-```bash
-python scripts/verify_java_setup.py
-```
-
-Real LLM provider:
+Java / Defects4J with OpenRouter:
 
 ```bash
 PIPELINE_ALLOW_LOCAL_FALLBACK=false python scripts/run_pipeline.py \
@@ -153,32 +166,25 @@ PIPELINE_ALLOW_LOCAL_FALLBACK=false python scripts/run_pipeline.py \
 Each run writes files under `outputs/`, including:
 
 ```text
+baseline_reproduction.json
+source_context.json
+bug_detection_prompt.json
 bug_detection_result.json
+fix_generation_prompt.json
 fix_generation_result.json
 validation_result.json
 evaluation_metrics.json
 applied_patch.diff
 final_experiment_report.html
-source_snapshots.json
 snapshots/original/...
 snapshots/updated/...
+snapshots/benchmark_fixed/...
 ```
 
-The snapshots are used by the UI to compare the exact original buggy file with the exact LLM-updated file.
+These snapshots allow the UI to show the exact original buggy source, the exact LLM-updated source, and the benchmark fixed reference side by side.
 
 ## Deployment
 
-For deployment, use the Streamlit app as an evidence review dashboard. The deployed UI can show the validated Python and Java runs without requiring an examiner to install WSL, BugsInPy or Defects4J.
+For deployment, use GitHub + Render + Docker. The repository contains a Dockerfile that installs the app, Java, BugsInPy, Defects4J and required runtime tools.
 
-See `CLOUD_HOSTING_GUIDE.md` for the Render/Docker deployment process.
-
-## Online benchmark selection
-
-The Streamlit app includes a **Run Benchmark** tab. When BugsInPy or Defects4J tools are installed, the tab discovers available projects and bug IDs and presents them as dropdowns. The app checks out the selected bug on demand, so individual bug workspaces do not need to be committed to the repository.
-
-For final marking, use the included validated evidence first:
-
-- Python: BugsInPy `httpie` bug `1`
-- Java: Defects4J `Chart` bug `1`
-
-Additional bugs can be selected and executed, but they are experimental because each benchmark case depends on dependency setup, test reproducibility, and LLM patch quality.
+See `CLOUD_HOSTING_GUIDE.md` for the deployment steps and environment variables.

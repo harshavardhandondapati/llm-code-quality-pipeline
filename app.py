@@ -31,12 +31,18 @@ from llm_pipeline.ui import (  # noqa: E402
     review_python_source,
     write_interactive_review_artifacts,
 )
+from llm_pipeline.ui.job_store import (  # noqa: E402
+    list_jobs,
+    read_job,
+    read_log_tail,
+    refresh_job_status,
+    start_pipeline_job,
+)
 from llm_pipeline.ui.benchmark_catalog import (  # noqa: E402
     discover_benchmark_catalog,
     option_count,
     project_names,
 )
-from llm_pipeline.workflow import run_final_pipeline  # noqa: E402
 
 
 RUN_OPTIONS = {
@@ -361,14 +367,20 @@ with comparison_tab:
 
 with execute_tab:
     st.subheader("Run Benchmark")
-    st.write("Select a benchmark case and run the pipeline on demand. The selected project is checked out only when you start the run.")
-    st.info("Additional bug cases are supported by the framework, but only the submitted examples are guaranteed to pass. New cases depend on benchmark setup, dependencies, and the LLM patch quality.")
+    st.write(
+        "Select any discovered benchmark case and start a background run. "
+        "The page can be refreshed while the job continues."
+    )
 
     catalog = _cached_catalog()
     total_cases = sum(option_count(item["projects"]) for item in catalog.values())
     st.caption(f"Selectable benchmark cases found: {total_cases}")
 
     dataset_choices = [key for key in ("bugsinpy", "defects4j") if catalog.get(key, {}).get("projects")]
+    if not dataset_choices:
+        st.error("No benchmark metadata was found. Check the benchmark tools installation.")
+        st.stop()
+
     dataset = st.selectbox(
         "Dataset",
         dataset_choices,
@@ -385,11 +397,25 @@ with execute_tab:
     bug_id = st.selectbox("Bug ID", projects[project], index=0)
 
     provider = st.selectbox("Model provider", ["mock", "openrouter"], index=0)
-    model_default = "mock-model" if provider == "mock" else "deepseek/deepseek-v4-flash"
-    model_name = st.text_input("Model", value=model_default)
+    if provider == "mock":
+        model_name = st.text_input("Model", value="mock-model")
+    else:
+        model_presets = [
+            "deepseek/deepseek-v4-flash",
+            "qwen/qwen3-coder",
+            "custom",
+        ]
+        preset = st.selectbox("Model preset", model_presets, index=0)
+        model_name = st.text_input(
+            "OpenRouter model ID",
+            value="deepseek/deepseek-v4-flash" if preset == "custom" else preset,
+            help="Paste any OpenRouter model ID here to test another model without changing the code.",
+        )
 
-    st.toggle("Disable local fallback", value=True, key="disable_local_fallback")
-    st.caption("Keep fallback disabled for final evidence so the patch must come from the LLM response.")
+    disable_fallback = st.toggle("Disable local fallback", value=True, key="disable_local_fallback")
+    st.caption(
+        "Keep this enabled for final evidence. When enabled, the repair must come from the selected model response."
+    )
 
     if os.environ.get("APP_RUN_PASSWORD", "").strip():
         st.text_input("Run password", type="password", key="run_password")
@@ -400,47 +426,97 @@ with execute_tab:
 
     run_col, note_col = st.columns([1, 2])
     with run_col:
-        run_clicked = st.button("Run selected bug", type="primary", disabled=not can_run, use_container_width=True)
+        run_clicked = st.button("Start benchmark run", type="primary", disabled=not can_run, use_container_width=True)
     with note_col:
-        st.caption("Mock runs are repeatable and cost-free. OpenRouter runs use your configured API key and may take several minutes.")
+        st.caption(
+            "The job runs in the background and writes evidence under a new workspace. "
+            "Use Refresh status below while it is running."
+        )
 
     if run_clicked:
         if provider == "openrouter" and not os.environ.get("PIPELINE_OPENROUTER_API_KEY"):
             st.error("OpenRouter is selected, but PIPELINE_OPENROUTER_API_KEY is not configured on this deployment.")
         else:
-            previous_fallback = os.environ.get("PIPELINE_ALLOW_LOCAL_FALLBACK")
-            os.environ["PIPELINE_ALLOW_LOCAL_FALLBACK"] = "false" if st.session_state.get("disable_local_fallback", True) else "true"
-            try:
-                with st.spinner("Running checkout, LLM analysis, patching, and validation..."):
-                    result = run_final_pipeline(
-                        dataset=dataset,
-                        project=project,
-                        bug_id=bug_id,
-                        provider=provider,
-                        model_name=model_name,
-                        approval="approved",
-                        reviewer="web-ui",
-                    )
-                st.session_state["last_pipeline_result"] = result
-                st.success("Pipeline run completed." if result.get("successful") else "Pipeline run finished with failed checks.")
-                st.json(result)
-            except Exception as exc:  # pragma: no cover - UI guard
-                st.error(f"Pipeline run could not complete: {exc}")
-            finally:
-                if previous_fallback is None:
-                    os.environ.pop("PIPELINE_ALLOW_LOCAL_FALLBACK", None)
-                else:
-                    os.environ["PIPELINE_ALLOW_LOCAL_FALLBACK"] = previous_fallback
+            job = start_pipeline_job(
+                dataset=dataset,
+                project=project,
+                bug_id=str(bug_id),
+                provider=provider,
+                model_name=model_name.strip() or ("mock-model" if provider == "mock" else "deepseek/deepseek-v4-flash"),
+                allow_local_fallback=not bool(disable_fallback),
+                reviewer="web-ui",
+                project_root=Path.cwd(),
+            )
+            st.session_state["selected_job_id"] = job["job_id"]
+            st.success(f"Started background job {job['job_id']}.")
 
-    last_result = st.session_state.get("last_pipeline_result")
-    if last_result:
-        st.markdown("### Latest run")
-        st.write(f"Status: **{last_result.get('overall_status')}**")
-        st.write(f"Workspace: `{last_result.get('workspace_path')}`")
-        report = _report_path_for_dataset(str(last_result.get("dataset", dataset)).lower())
-        if st.button("Load latest run in review tabs", use_container_width=False):
-            _load_run(report, 0)
-            st.success("Latest run loaded. Open the Run Summary or Code Comparison tab.")
+    st.markdown("### Job status")
+    jobs = list_jobs(Path.cwd(), limit=20)
+    if not jobs:
+        st.info("No benchmark jobs have been started from this deployment yet.")
+    else:
+        selected_default = st.session_state.get("selected_job_id") or jobs[0]["job_id"]
+        ids = [str(job["job_id"]) for job in jobs]
+        if selected_default not in ids:
+            selected_default = ids[0]
+        selected_job_id = st.selectbox(
+            "Recent jobs",
+            ids,
+            index=ids.index(selected_default),
+            format_func=lambda item: next(
+                (
+                    f"{job.get('dataset')} {job.get('project')}-{job.get('bug_id')} · {job.get('provider')} · {job.get('status')} · {item}"
+                    for job in jobs
+                    if str(job.get("job_id")) == str(item)
+                ),
+                item,
+            ),
+        )
+        st.session_state["selected_job_id"] = selected_job_id
+        if st.button("Refresh status", use_container_width=False):
+            st.rerun()
+
+        job = read_job(selected_job_id, Path.cwd()) or {}
+        job = refresh_job_status(job, Path.cwd()) if job else {}
+        status = str(job.get("status") or "unknown")
+        if status == "successful":
+            st.success("Job completed successfully.")
+        elif status in {"failed", "interrupted"}:
+            st.error("Job did not complete successfully. Review the message and logs below.")
+        else:
+            st.info("Job is running. Refresh status in a few minutes.")
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            _card("Status", status)
+        with c2:
+            _card("Dataset", job.get("dataset"))
+        with c3:
+            _card("Project / bug", f"{job.get('project')} #{job.get('bug_id')}")
+        with c4:
+            _card("Model", job.get("model_name"))
+
+        st.write(_short_text(job.get("message"), "No job message recorded."))
+        if job.get("workspace_path"):
+            st.write(f"Workspace: `{job.get('workspace_path')}`")
+        if job.get("candidate_report"):
+            st.write(f"Evidence report: `{job.get('candidate_report')}`")
+
+        if status == "successful" and job.get("candidate_report"):
+            if st.button("Load this run in review tabs", use_container_width=False):
+                _load_run(str(job.get("candidate_report")), 0)
+                st.success("Loaded. Open Run Summary or Code Comparison to review the evidence.")
+
+        with st.expander("Job result JSON", expanded=status in {"failed", "interrupted"}):
+            st.json(job)
+
+        with st.expander("Worker logs"):
+            stdout_tail = read_log_tail(job.get("stdout_log"))
+            stderr_tail = read_log_tail(job.get("stderr_log"))
+            st.markdown("**stdout**")
+            st.code(stdout_tail or "No stdout log recorded.", language="text")
+            st.markdown("**stderr**")
+            st.code(stderr_tail or "No stderr log recorded.", language="text")
 
 
 with file_tab:

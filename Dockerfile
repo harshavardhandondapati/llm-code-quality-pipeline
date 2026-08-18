@@ -2,22 +2,14 @@ FROM python:3.10-bullseye
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=120 \
     PIPELINE_TOOLS_DIRECTORY=/app/tools \
     PIPELINE_ALLOW_LOCAL_FALLBACK=false \
+    PIPELINE_TEST_TIMEOUT_SECONDS=2400 \
     D4J_HOME=/app/tools/defects4j
 
 WORKDIR /app
-
-ENV PYENV_ROOT=/opt/pyenv
-ENV PATH=/opt/pyenv/bin:/opt/pyenv/shims:$PATH
-
-RUN git clone --depth 1 https://github.com/pyenv/pyenv.git /opt/pyenv \
-    && pyenv install -s 3.10.20 \
-    && pyenv global 3.10.20 \
-    && python --version \
-    && pip --version
-
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -50,6 +42,15 @@ RUN apt-get update \
        liblzma-dev \
     && rm -rf /var/lib/apt/lists/*
 
+ENV PYENV_ROOT=/opt/pyenv
+ENV PATH=/opt/pyenv/bin:/opt/pyenv/shims:$PATH
+
+RUN git clone --depth 1 https://github.com/pyenv/pyenv.git /opt/pyenv \
+    && pyenv install -s 3.10.20 \
+    && pyenv global 3.10.20 \
+    && python --version \
+    && pip --version
+
 COPY pyproject.toml README.md requirements.txt UI_REQUIREMENTS.txt ./
 COPY src ./src
 COPY scripts ./scripts
@@ -61,7 +62,7 @@ COPY tools ./tools
 COPY app.py ./app.py
 COPY .env.example ./.env.example
 
-RUN chmod +x scripts/prepare_benchmark_tools.sh \
+RUN chmod +x scripts/prepare_benchmark_tools.sh scripts/run_pipeline_job.py \
     && python -m pip install --upgrade pip \
     && python -m pip install -r requirements.txt \
     && python -m pip install virtualenv
@@ -75,7 +76,8 @@ ENV BUGSINPY_HOME=/app/tools/BugsInPy \
     PIPELINE_DEFECTS4J_EXECUTABLE_DIRECTORY=/app/tools/defects4j/framework/bin \
     PATH=/app/tools/BugsInPy/framework/bin:/app/tools/defects4j/framework/bin:$PATH
 
-RUN /app/tools/defects4j/framework/bin/defects4j info -p Chart >/tmp/defects4j_final_verify.txt
+RUN /app/tools/defects4j/framework/bin/defects4j info -p Chart >/tmp/defects4j_final_verify.txt \
+    && /app/tools/BugsInPy/framework/bin/bugsinpy-checkout --help >/tmp/bugsinpy_final_verify.txt
 
 EXPOSE 8501
 

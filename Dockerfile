@@ -9,6 +9,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+ENV PYENV_ROOT=/opt/pyenv
+ENV PATH=/opt/pyenv/bin:/opt/pyenv/shims:$PATH
+
+RUN git clone --depth 1 https://github.com/pyenv/pyenv.git /opt/pyenv \
+    && pyenv install -s 3.10.20 \
+    && pyenv global 3.10.20 \
+    && python --version \
+    && pip --version
+
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        git \
@@ -25,6 +35,19 @@ RUN apt-get update \
        python3-venv \
        python3-dev \
        dos2unix \
+       zlib1g-dev \
+       libssl-dev \
+       libbz2-dev \
+       libreadline-dev \
+       libsqlite3-dev \
+       llvm \
+       libncursesw5-dev \
+       xz-utils \
+       tk-dev \
+       libxml2-dev \
+       libxmlsec1-dev \
+       libffi-dev \
+       liblzma-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md requirements.txt UI_REQUIREMENTS.txt ./

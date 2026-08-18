@@ -97,7 +97,15 @@ def run_final_pipeline(
         active_model_name = model_name or _default_model_name(provider, settings)
         failure_parts = ["Baseline failure was not reproduced, so the pipeline stopped before LLM analysis."]
         if not compile_result.succeeded:
-            failure_parts.append(f"Compile step failed. See {workspace.logs / 'bugsinpy_compile.json'}.")
+            compile_stdout = str(getattr(compile_result, "stdout", "") or "")[-1200:]
+            compile_stderr = str(getattr(compile_result, "stderr", "") or "")[-1200:]
+            compile_code = getattr(compile_result, "return_code", "unknown")
+            failure_parts.append(
+                f"Compile step failed with return code {compile_code}. "
+                f"See {workspace.logs / 'bugsinpy_compile.json'}. "
+                f"stdout: {compile_stdout} "
+                f"stderr: {compile_stderr}"
+            )
         elif test_result is None:
             failure_parts.append("No triggering test result was available after checkout/compile.")
         else:

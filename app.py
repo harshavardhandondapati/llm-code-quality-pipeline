@@ -56,6 +56,65 @@ DATASET_LABELS = {
 }
 
 
+
+def _render_job_workspace_artifacts(job_data: dict) -> None:
+    """Show validation files produced by a background benchmark job."""
+    result = job_data.get("result") or {}
+    workspace_value = job_data.get("workspace_path") or result.get("workspace_path")
+
+    if not workspace_value:
+        st.info("No workspace path was recorded for this job.")
+        return
+
+    workspace = Path(str(workspace_value))
+    outputs = workspace / "outputs"
+
+    st.markdown("### Validation evidence")
+
+    if not outputs.exists():
+        st.warning(
+            "Workspace outputs are not available. "
+            "This can happen if the service restarted or the job finished before evidence was written."
+        )
+        return
+
+    files_to_show = [
+        ("Validation result", outputs / "validation_result.json", "json", True),
+        ("Evaluation metrics", outputs / "evaluation_metrics.json", "json", True),
+        ("Post-fix evaluation", outputs / "post_fix_evaluation.json", "json", False),
+        ("Applied patch", outputs / "applied_patch.diff", "diff", True),
+        ("Clean applied patch", outputs / "applied_patch_clean.diff", "diff", False),
+        ("Bug detection response", outputs / "bug_detection_response.json", "json", False),
+        ("Fix generation response", outputs / "fix_generation_response.json", "json", False),
+        ("Pipeline result", outputs / "workflow_pipeline_result.json", "json", False),
+    ]
+
+    shown = False
+
+    for title, file_path, language, expanded in files_to_show:
+        if not file_path.exists():
+            continue
+
+        content = file_path.read_text(encoding="utf-8", errors="replace")
+        if len(content) > 50000:
+            content = content[:50000] + "\n\n... output truncated in UI ..."
+
+        with st.expander(title, expanded=expanded):
+            st.caption(str(file_path))
+            if language == "json":
+                try:
+                    st.json(json.loads(content))
+                except Exception:
+                    st.code(content, language="json")
+            else:
+                st.code(content, language=language)
+
+        shown = True
+
+    if not shown:
+        st.info("No validation artefacts were found in the workspace outputs folder yet.")
+
+
 st.set_page_config(page_title="Code Quality Review", page_icon="✓", layout="wide")
 
 st.markdown(
@@ -509,6 +568,7 @@ with execute_tab:
 
         with st.expander("Job result JSON", expanded=status in {"failed", "interrupted"}):
             st.json(job)
+            _render_job_workspace_artifacts(job)
 
         with st.expander("Worker logs"):
             stdout_tail = read_log_tail(job.get("stdout_log"))

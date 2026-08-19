@@ -57,6 +57,8 @@ def apply_generated_patch(
         _write_clean_evidence_diff(outputs, target_files)
 
     compile_result = adapter.compile_project(checkout)
+    if compile_result.succeeded and checkout.bug_case.dataset.lower() == "bugsinpy":
+        _install_python_project_editable(project_root, outputs)
     test_result = adapter.run_triggering_tests(checkout) if compile_result.succeeded else None
 
     compile_log = outputs / "post_patch_compile.json"
@@ -75,7 +77,9 @@ def apply_generated_patch(
         "patch_strategy": patch_strategy,
         "already_applied": False,
         "compilation_passed": compile_result.succeeded,
-        "triggering_tests_passed": bool(test_result and _test_output_passed(test_result)),
+        "triggering_tests_passed": bool(
+            test_result and _test_output_passed(test_result, dataset=checkout.bug_case.dataset)
+        ),
         "validation_scope": "triggering_tests",
         "changed_files": target_files,
         "failure_reason": None,
@@ -562,13 +566,73 @@ def _parse_unified_diff_hunks(patch_text: str) -> dict[str, list[tuple[str, str]
 
 
 
-def _test_output_passed(result: CommandResult) -> bool:
-    """Return True only when the benchmark output has no failing tests."""
+
+
+
+def _install_python_project_editable(project_root: Path, outputs: Path) -> None:
+    """Reinstall a patched BugsInPy project in editable mode before validation tests.
+
+    Some BugsInPy compile scripts prepare the virtual environment before the
+    patch is applied. Reinstalling after the patch ensures triggering tests use
+    the patched checkout, not a previously installed copy.
+    """
+    env_python = project_root / "env" / "bin" / "python"
+    log_file = outputs / "post_patch_editable_install.json"
+
+    if not env_python.exists():
+        log_file.write_text(
+            json.dumps(
+                {"skipped": True, "reason": f"No BugsInPy virtualenv python found at {env_python}"},
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return
+
+    completed = subprocess.run(
+        [str(env_python), "-m", "pip", "install", "-e", "."],
+        cwd=project_root,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=600,
+    )
+    result = CommandResult(
+        command=[str(env_python), "-m", "pip", "install", "-e", "."],
+        working_directory=project_root,
+        return_code=completed.returncode,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        execution_time_seconds=0,
+    )
+    log_file.write_text(json.dumps(result.model_dump(mode="json"), indent=2) + "\n", encoding="utf-8")
+
+
+def _test_output_passed(result: CommandResult, *, dataset: str | None = None) -> bool:
+    """Return True only when the benchmark validation test passed.
+
+    BugsInPy runs Python tests where the process return code is the reliable
+    post-patch pass/fail signal. The output may contain generic words like
+    "error" in warnings or package messages, so do not reject a successful
+    BugsInPy run using broad text matching. Defects4J reports failing test
+    counts in output, so keep that check when present.
+    """
+    if result.timed_out:
+        return False
+
     output = f"{result.stdout}\n{result.stderr}".lower()
+    dataset_name = (dataset or "").lower()
 
     defects4j_match = re.search(r"failing tests:\s*(\d+)", output)
     if defects4j_match:
         return int(defects4j_match.group(1)) == 0
+
+    if dataset_name == "bugsinpy":
+        return result.succeeded
+
+    if result.succeeded:
+        return True
 
     failure_markers = [
         "assertionerror",
@@ -583,15 +647,11 @@ def _test_output_passed(result: CommandResult) -> bool:
     if any(marker in output for marker in failure_markers):
         return False
 
-    if result.succeeded:
-        return True
-
     return (
         "all tests passed" in output
         or " passed" in output
         or "failing tests: 0" in output
     )
-
 
 def _validation_text(validation: Mapping[str, Any]) -> str:
     return "\n".join(f"{key}: {value}" for key, value in validation.items()) + "\n"

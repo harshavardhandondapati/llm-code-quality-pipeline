@@ -69,3 +69,30 @@ def test_local_httpie_repair_generates_patch_and_fixed_file(tmp_path, monkeypatc
     assert "ENAMETOOLONG" in result["fixed_files"]["httpie/downloads.py"]
 
 
+
+from llm_pipeline.repair.apply_patch import _test_output_passed
+from llm_pipeline.schemas import CommandResult
+
+
+def test_bugsinpy_validation_uses_return_code_not_broad_output_words():
+    result = CommandResult(
+        command=["bugsinpy-test"],
+        working_directory=Path("/tmp/project"),
+        return_code=0,
+        stdout="1 passed, warnings about error handling text only",
+        stderr="",
+        execution_time_seconds=1.0,
+    )
+    assert _test_output_passed(result, dataset="BugsInPy") is True
+
+
+def test_bugsinpy_validation_rejects_nonzero_return_code():
+    result = CommandResult(
+        command=["bugsinpy-test"],
+        working_directory=Path("/tmp/project"),
+        return_code=1,
+        stdout="1 failed",
+        stderr="",
+        execution_time_seconds=1.0,
+    )
+    assert _test_output_passed(result, dataset="BugsInPy") is False

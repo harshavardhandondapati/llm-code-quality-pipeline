@@ -81,6 +81,9 @@ def _render_job_workspace_artifacts(job_data: dict) -> None:
     files_to_show = [
         ("Validation result", outputs / "validation_result.json", "json", True),
         ("Evaluation metrics", outputs / "evaluation_metrics.json", "json", True),
+        ("Post-patch compile log", outputs / "post_patch_compile.json", "json", False),
+        ("Post-patch editable install log", outputs / "post_patch_editable_install.json", "json", False),
+        ("Post-patch triggering test log", outputs / "post_patch_triggering_test.json", "json", True),
         ("Post-fix evaluation", outputs / "post_fix_evaluation.json", "json", False),
         ("Applied patch", outputs / "applied_patch.diff", "diff", True),
         ("Clean applied patch", outputs / "applied_patch_clean.diff", "diff", False),

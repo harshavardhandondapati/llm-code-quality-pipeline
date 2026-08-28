@@ -720,9 +720,9 @@ with execute_tab:
 
 with file_tab:
     st.subheader("File Review")
-    st.write("Upload a Python file for a quick local review. This is separate from the full benchmark pipeline.")
+    st.write("Upload a Python or Java file for a quick local review. This is separate from the full benchmark pipeline.")
 
-    uploaded = st.file_uploader("Upload a Python file", type=["py"])
+    uploaded = st.file_uploader("Upload a Python or Java file", type=["py", "java"])
 
     if uploaded is not None:
         source = uploaded.getvalue().decode("utf-8", errors="replace")

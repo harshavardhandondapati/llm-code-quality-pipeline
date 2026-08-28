@@ -890,8 +890,8 @@ def _file_review_diff(file_name, original_code, fixed_code):
 with file_tab:
     st.subheader("File Review")
     st.write(
-        "Upload a Python or Java file, select a real LLM model, and generate a reviewed fixed version. "
-        "This is separate from the full benchmark pipeline."
+        "Upload a Python or Java source file and select a review model to generate findings and suggested fixes. "
+        ""
     )
 
     uploaded = st.file_uploader(

@@ -1,6 +1,13 @@
+from __future__ import annotations
+import urllib.request
+import urllib.error
+import tempfile
+import subprocess
+import shutil
+import re
+import difflib
 """Streamlit dashboard for the multi-language code quality pipeline."""
 
-from __future__ import annotations
 
 import json
 import os
@@ -603,7 +610,7 @@ with execute_tab:
             "qwen/qwen3-coder",
             "custom",
         ]
-        preset = st.selectbox("Model preset", model_presets, index=0)
+        preset = st.selectbox("Review model", model_presets, index=0)
         model_name = st.text_input(
             "OpenRouter model ID",
             value="deepseek/deepseek-v4-flash" if preset == "custom" else preset,
@@ -718,55 +725,318 @@ with execute_tab:
             st.code(stderr_tail or "No stderr log recorded.", language="text")
 
 
+
+def _file_review_language(file_name):
+    lower_name = file_name.lower()
+    if lower_name.endswith(".py"):
+        return "python"
+    if lower_name.endswith(".java"):
+        return "java"
+    return "text"
+
+
+def _openrouter_key_for_file_review():
+    return (
+        os.getenv("OPENROUTER_API_KEY")
+        or os.getenv("PIPELINE_OPENROUTER_API_KEY")
+        or os.getenv("OPENROUTER_KEY")
+    )
+
+
+def _call_openrouter_for_file_review(model_name, language, file_name, source_code):
+    api_key = _openrouter_key_for_file_review()
+    if not api_key:
+        raise RuntimeError("OpenRouter API key is missing. Set OPENROUTER_API_KEY in Render environment variables.")
+
+    prompt = f"""
+You are reviewing one {language} source file for a production code-quality review.
+
+Review and fix the file.
+
+Requirements:
+1. Identify syntax or compilation errors.
+2. Identify logic bugs.
+3. Identify input validation issues.
+4. Identify resource-handling issues.
+5. Return the complete corrected source code.
+6. Keep the same program purpose and interactive behaviour.
+7. If the file is Java, keep the same public class name as the uploaded file.
+8. Do not invent external dependencies.
+
+Return exactly in this format:
+
+BUG_REPORT_START
+List the bugs with location, severity, reason, and fix.
+BUG_REPORT_END
+
+FIXED_CODE_START
+Put the complete fixed source code here.
+FIXED_CODE_END
+
+File name: {file_name}
+
+Source code:
+{source_code}
+""".strip()
+
+    payload = {
+        "model": model_name,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a senior software engineer. Produce a precise bug report and a complete corrected source file.",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 7000,
+    }
+
+    req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://llm-code-quality-pipeline.onrender.com",
+            "X-Title": "LLM Code Quality Pipeline",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=240) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"OpenRouter request failed: HTTP {exc.code}: {body}") from exc
+
+    return data["choices"][0]["message"]["content"]
+
+
+def _extract_between_markers(text_value, start_marker, end_marker):
+    if start_marker in text_value and end_marker in text_value:
+        return text_value.split(start_marker, 1)[1].split(end_marker, 1)[0].strip()
+    return ""
+
+
+def _extract_fixed_file_code(response_text):
+    fixed = _extract_between_markers(response_text, "FIXED_CODE_START", "FIXED_CODE_END")
+    if fixed:
+        return fixed.strip() + "\n"
+
+    cleaned = response_text.strip()
+    cleaned = re.sub(r"^```[a-zA-Z]*\s*", "", cleaned)
+    cleaned = re.sub(r"```$", "", cleaned)
+    return cleaned.strip() + "\n"
+
+
+def _extract_bug_report(response_text):
+    report = _extract_between_markers(response_text, "BUG_REPORT_START", "BUG_REPORT_END")
+    if report:
+        return report
+    if "FIXED_CODE_START" in response_text:
+        return response_text.split("FIXED_CODE_START", 1)[0].strip()
+    return response_text.strip()
+
+
+def _validate_file_review_code(file_name, language, source_code):
+    if language == "python":
+        try:
+            compile(source_code, file_name, "exec")
+            return True, "Python syntax validation passed."
+        except SyntaxError as exc:
+            return False, f"Python syntax error at line {exc.lineno}: {exc.msg}"
+
+    if language == "java":
+        javac = shutil.which("javac")
+        if not javac:
+            return None, "Java validation skipped because javac is not installed."
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            java_path = tmp_path / file_name
+            java_path.write_text(source_code, encoding="utf-8")
+
+            result = subprocess.run(
+                [javac, java_path.name],
+                cwd=tmp_path,
+                text=True,
+                capture_output=True,
+                timeout=60,
+            )
+
+            if result.returncode == 0:
+                return True, "Java compilation validation passed."
+
+            return False, result.stderr or result.stdout or "Java compilation failed."
+
+    return None, "Validation is available only for Python and Java files."
+
+
+def _file_review_diff(file_name, original_code, fixed_code):
+    return "\n".join(
+        difflib.unified_diff(
+            original_code.splitlines(),
+            fixed_code.splitlines(),
+            fromfile=f"original/{file_name}",
+            tofile=f"fixed/{file_name}",
+            lineterm="",
+        )
+    )
+
+
+
 with file_tab:
     st.subheader("File Review")
-    st.write("Upload a Python or Java file for a quick local review. This is separate from the full benchmark pipeline.")
+    st.write(
+        "Upload a Python or Java file, select a real LLM model, and generate a reviewed fixed version. "
+        "This is separate from the full benchmark pipeline."
+    )
 
-    uploaded = st.file_uploader("Upload a Python or Java file", type=["py", "java"])
+    uploaded = st.file_uploader(
+        "Upload a Python or Java file",
+        type=["py", "java"],
+        key="llm_file_review_upload",
+    )
+
+    st.markdown("### Model selection")
+
+    model_preset = st.selectbox(
+        "Review model",
+        [
+            "deepseek/deepseek-v4-flash",
+            "openai/gpt-4.1",
+            "openai/gpt-4.1-mini",
+            "qwen/qwen3-coder",
+            "custom",
+        ],
+        key="file_review_model_preset",
+    )
+
+    if model_preset == "custom":
+        model_name = st.text_input(
+            "Custom OpenRouter model name",
+            value="openai/gpt-4.1",
+            key="file_review_custom_model",
+        ).strip()
+    else:
+        model_name = model_preset
+
+    st.caption(f"Selected model: `{model_name}`")
 
     if uploaded is not None:
-        source = uploaded.getvalue().decode("utf-8", errors="replace")
-        st.markdown("#### Uploaded file")
-        st.code(source, language="python")
+        file_name = uploaded.name
+        language = _file_review_language(file_name)
+        original_code = uploaded.getvalue().decode("utf-8", errors="replace")
 
-        if st.button("Run file review", type="primary"):
-            result = review_python_source(source, filename=uploaded.name, provider="Rule-based local review")
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_dir = Path("interactive_reviews") / f"review_{timestamp}_{Path(uploaded.name).stem}"
-            artifacts = write_interactive_review_artifacts(result, original_source=source, output_dir=output_dir)
-            st.session_state["interactive_result"] = result.to_dict()
-            st.session_state["interactive_artifacts"] = artifacts
-
-    result_data = st.session_state.get("interactive_result")
-    artifacts = st.session_state.get("interactive_artifacts")
-    if result_data and artifacts:
-        st.markdown("### Review result")
+        st.markdown("### Uploaded file")
         cols = st.columns(3)
-        cols[0].metric("Issue found", str(result_data["bug_found"]))
-        cols[1].metric("Issue type", result_data["issue_type"])
-        cols[2].metric("Changed", str(result_data["changed"]))
-        st.write(result_data["explanation"])
+        cols[0].metric("File", file_name)
+        cols[1].metric("Language", language)
+        cols[2].metric("Model", model_name)
 
-        before_col, after_col = st.columns(2)
-        with before_col:
-            st.markdown("#### Original upload")
-            st.code(Path(artifacts["original_file"]).read_text(encoding="utf-8"), language="python")
-        with after_col:
-            st.markdown("#### Suggested update")
-            st.code(result_data["fixed_source"], language="python")
+        original_ok, original_msg = _validate_file_review_code(file_name, language, original_code)
+        if original_ok is True:
+            st.info("Initial scan: No syntax or compilation issues were detected.")
+        elif original_ok is False:
+            st.warning("Initial scan: Issues were detected in the uploaded file. Run review to generate recommendations and a corrected version.")
+        else:
+            st.info("Initial scan: Automated validation is not available in this environment.")
 
-        st.markdown("#### Diff")
-        st.code(result_data["patch"] or "No code changes proposed.", language="diff")
+        with st.expander("Technical details", expanded=False):
+            st.code(original_msg, language="text")
+
+        with st.expander("Show uploaded source", expanded=False):
+            st.code(original_code, language=language)
+
+        if st.button("Run code review", type="primary", use_container_width=True):
+            if not model_name:
+                st.error("Please select or enter a model name.")
+            else:
+                with st.spinner(f"Reviewing {file_name} with {model_name}..."):
+                    try:
+                        llm_response = _call_openrouter_for_file_review(
+                            model_name=model_name,
+                            language=language,
+                            file_name=file_name,
+                            source_code=original_code,
+                        )
+                        bug_report = _extract_bug_report(llm_response)
+                        fixed_code = _extract_fixed_file_code(llm_response)
+
+                        st.session_state["file_review_result"] = {
+                            "file_name": file_name,
+                            "language": language,
+                            "provider": "openrouter",
+                            "model_name": model_name,
+                            "original_code": original_code,
+                            "bug_report": bug_report,
+                            "fixed_code": fixed_code,
+                            "raw_response": llm_response,
+                        }
+                    except Exception as exc:
+                        st.error(str(exc))
+
+    result = st.session_state.get("file_review_result")
+
+    if result:
+        st.markdown("---")
+        st.markdown("## Review results")
+
+        cols = st.columns(4)
+        cols[0].metric("Provider", result["provider"])
+        cols[1].metric("Model", result["model_name"])
+        cols[2].metric("Language", result["language"])
+        cols[3].metric("File", result["file_name"])
+
+        st.markdown("### Bug report")
+        st.markdown(result.get("bug_report") or "No bug report returned.")
+
+        fixed_code = result.get("fixed_code") or ""
+        original_code = result.get("original_code") or ""
+        file_name = result.get("file_name") or "fixed_file"
+        language = result.get("language") or "text"
+
+        fixed_ok, fixed_msg = _validate_file_review_code(file_name, language, fixed_code)
+        if fixed_ok is True:
+            st.success("Validation check: Suggested code passed syntax or compilation checks.")
+        elif fixed_ok is False:
+            st.error("Validation check: Suggested code still requires attention.")
+        else:
+            st.info("Validation check: Automated validation is not available in this environment.")
+
+        with st.expander("Validation details", expanded=False):
+            st.code(fixed_msg, language="text")
+
+        st.markdown("### Suggested fixed code")
+        st.code(fixed_code, language=language)
+
+        st.markdown("### Diff")
+        diff = _file_review_diff(file_name, original_code, fixed_code)
+        st.code(diff if diff else "No code changes detected.", language="diff")
+
+        suffix = Path(file_name).suffix
+        stem = Path(file_name).stem
+        download_name = f"{stem}_fixed{suffix}"
 
         st.download_button(
-            "Download updated file",
-            data=Path(artifacts["fixed_file"]).read_text(encoding="utf-8"),
-            file_name=Path(artifacts["fixed_file"]).name,
-            mime="text/x-python",
+            "Download fixed file",
+            data=fixed_code,
+            file_name=download_name,
+            mime="text/plain",
+            use_container_width=True,
         )
+
+        review_json = json.dumps(result, indent=2)
         st.download_button(
-            "Download review notes",
-            data=build_review_markdown(type("Result", (), result_data)()),
-            file_name="file_review_notes.md",
-            mime="text/markdown",
+            "Download review report",
+            data=review_json,
+            file_name=f"{stem}_file_review.json",
+            mime="application/json",
+            use_container_width=True,
         )
+
+        with st.expander("Raw model response", expanded=False):
+            st.text(result.get("raw_response") or "")
+

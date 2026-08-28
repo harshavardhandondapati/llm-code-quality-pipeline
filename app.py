@@ -118,6 +118,55 @@ def _render_job_workspace_artifacts(job_data: dict) -> None:
         st.info("No validation artefacts were found in the workspace outputs folder yet.")
 
 
+
+def _value_from_run(data: dict, key: str, default: str = "Not recorded") -> str:
+    """Read run metadata from either job-level data or nested result data."""
+    if not isinstance(data, dict):
+        return default
+    result = data.get("result") if isinstance(data.get("result"), dict) else {}
+    value = data.get(key)
+    if value in (None, "", []):
+        value = result.get(key)
+    if value in (None, "", []):
+        return default
+    return str(value)
+
+
+def _render_run_source_card(data: dict, title: str = "Run source") -> None:
+    """Show exactly which model/job/workspace produced the displayed evidence."""
+    if not isinstance(data, dict) or not data:
+        return
+
+    result = data.get("result") if isinstance(data.get("result"), dict) else {}
+
+    job_id = _value_from_run(data, "job_id")
+    workspace = _value_from_run(data, "workspace_path")
+    provider = _value_from_run(data, "provider")
+    model = _value_from_run(data, "model_name")
+    dataset = _value_from_run(data, "dataset")
+    project = _value_from_run(data, "project")
+    bug_id = _value_from_run(data, "bug_id")
+    fallback = _value_from_run(data, "local_fallback_used")
+    repair_source = _value_from_run(data, "repair_source")
+    status = _value_from_run(data, "overall_status", _value_from_run(data, "status"))
+
+    if repair_source == "Not recorded":
+        metrics = data.get("metrics") if isinstance(data.get("metrics"), dict) else {}
+        repair_source = str(metrics.get("repair_source") or repair_source)
+
+    st.markdown(f"### {title}")
+
+    cols = st.columns(4)
+    cols[0].metric("Provider", provider)
+    cols[1].metric("Model", model)
+    cols[2].metric("Dataset", dataset)
+    cols[3].metric("Project / bug", f"{project} #{bug_id}" if bug_id != "Not recorded" else project)
+
+    st.caption(f"Job ID: `{job_id}`")
+    st.caption(f"Workspace: `{workspace}`")
+    st.caption(f"Status: `{status}` | Local fallback used: `{fallback}` | Repair source: `{repair_source}`")
+
+
 st.set_page_config(page_title="Code Quality Review", page_icon="✓", layout="wide")
 
 st.markdown(
@@ -286,6 +335,11 @@ run_tab, comparison_tab, execute_tab, file_tab = st.tabs(["Run Summary", "Code C
 
 with run_tab:
     st.subheader("Run Summary")
+review_job = st.session_state.get('active_review_job')
+if review_job:
+    _render_run_source_card(review_job, 'Run source')
+elif 'summary_data' in locals():
+    _render_run_source_card(summary_data, 'Run source')
     st.write("Choose a validated run and review the main evidence.")
 
     left, mid, right = st.columns([2.4, 0.9, 1])
@@ -395,6 +449,12 @@ with comparison_tab:
 
         file_path = _short_text(comparison_data.get("file_path"), selected_file or "Not recorded")
         st.markdown(f"**File under review:** `{file_path}`")
+
+        review_job = st.session_state.get('active_review_job')
+        if review_job:
+            _render_run_source_card(review_job, 'Run source for this comparison')
+        else:
+            _render_run_source_card(comparison_data, 'Run source for this comparison')
 
         original = comparison_data.get("original_source") or ""
         updated = comparison_data.get("updated_source") or ""
@@ -566,6 +626,7 @@ with execute_tab:
 
         if status == "successful" and job.get("candidate_report"):
             if st.button("Load this run in review tabs", use_container_width=False):
+                st.session_state['active_review_job'] = selected_job
                 _load_run(str(job.get("candidate_report")), 0)
                 st.success("Loaded. Open Run Summary or Code Comparison to review the evidence.")
 

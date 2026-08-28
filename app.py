@@ -175,8 +175,57 @@ st.markdown(
 
 
 def _short_text(value: Any, fallback: str = "Not recorded") -> str:
-    text = str(value or "").strip()
-    return text if text else fallback
+    """Display evidence values safely. False is valid evidence, not missing data."""
+    if value is None:
+        return fallback
+    if value == "":
+        return fallback
+    if value == []:
+        return fallback
+    return str(value)
+
+
+
+def _metrics_for_summary(summary_data: dict[str, Any]) -> dict[str, Any]:
+    """Read evaluation metrics for the loaded run, if available."""
+    try:
+        outputs = Path(str(summary_data.get("outputs_dir") or ""))
+        metrics_file = outputs / "evaluation_metrics.json"
+        if metrics_file.exists():
+            return json.loads(metrics_file.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return {}
+
+
+def _evidence_bool(value: Any) -> str:
+    """Show booleans in evidence-friendly lowercase form."""
+    if value is True or str(value).lower() == "true":
+        return "false" if False else "true"
+    if value is False or str(value).lower() == "false":
+        return "false"
+    return "Not recorded"
+
+
+def _friendly_patch_source(summary_data: dict[str, Any], metrics: dict[str, Any] | None = None) -> str:
+    metrics = metrics or {}
+    provider = str(summary_data.get("provider") or metrics.get("provider") or "").lower()
+    repair_source = str(summary_data.get("repair_source") or metrics.get("repair_source") or "").lower()
+    fallback = metrics.get("local_fallback_used", summary_data.get("local_fallback_used"))
+
+    if provider == "mock" or repair_source.startswith("mock"):
+        return "Deterministic mock repair"
+    if fallback is True or str(fallback).lower() == "true":
+        return "Local fallback repair"
+    return "LLM-generated patch"
+
+
+def _friendly_repair_source(summary_data: dict[str, Any], metrics: dict[str, Any] | None = None) -> str:
+    metrics = metrics or {}
+    value = summary_data.get("repair_source") or metrics.get("repair_source")
+    if value not in (None, "", "Not recorded"):
+        return str(value)
+    return _friendly_patch_source(summary_data, metrics)
 
 
 def _badge(value: Any, success: str, fail: str = "Needs review") -> str:
@@ -199,11 +248,41 @@ def _card(label: str, value: Any) -> None:
     )
 
 
+def _read_json_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
 def _load_run(candidate_report: str, candidate_index: int = 0) -> None:
     summary = build_dashboard_summary(candidate_report, candidate_index)
     comparison = build_code_comparison(candidate_report, candidate_index)
-    st.session_state["dashboard_summary"] = summary.to_dict()
-    st.session_state["code_comparison"] = comparison.to_dict()
+
+    summary_data = summary.to_dict()
+    comparison_data = comparison.to_dict()
+
+    outputs_dir = Path(str(summary_data.get("outputs_dir") or comparison_data.get("outputs_dir") or ""))
+    metrics = _read_json_file(outputs_dir / "evaluation_metrics.json")
+    workflow = _read_json_file(outputs_dir / "workflow_pipeline_result.json")
+
+    # Add model/run identity to the dashboard data so the reviewer can see
+    # exactly which model produced the loaded evidence.
+    for key in ["provider", "model_name", "workspace_path", "candidate_report"]:
+        summary_data[key] = workflow.get(key) or metrics.get(key) or summary_data.get(key)
+
+    summary_data["local_fallback_used"] = metrics.get("local_fallback_used", summary_data.get("local_fallback_used"))
+    summary_data["repair_source"] = metrics.get("repair_source", summary_data.get("repair_source"))
+    summary_data["target_runtime"] = metrics.get("target_runtime", summary_data.get("target_runtime"))
+    summary_data["total_known_execution_time_seconds"] = metrics.get(
+        "total_known_execution_time_seconds",
+        summary_data.get("total_known_execution_time_seconds"),
+    )
+
+    st.session_state["dashboard_summary"] = summary_data
+    st.session_state["code_comparison"] = comparison_data
     st.session_state["candidate_report_path"] = candidate_report
     st.session_state["candidate_index"] = candidate_index
 
@@ -253,6 +332,59 @@ def _download_button_if_exists(label: str, path: Path, file_name: str, mime: str
             mime=mime,
             use_container_width=True,
         )
+
+
+def _friendly_repair_source(summary_data: dict[str, Any]) -> str:
+    value = summary_data.get("repair_source")
+    if value not in (None, "", "Not recorded"):
+        return str(value)
+
+    provider = str(summary_data.get("provider") or "").lower()
+    fallback = summary_data.get("local_fallback_used")
+
+    if provider == "mock":
+        return "Deterministic mock repair"
+    if fallback is False or str(fallback).lower() == "false":
+        return "LLM-generated patch"
+    return "Not recorded"
+
+
+def _render_run_identity(summary_data: dict[str, Any], title: str = "Run identity") -> None:
+    """Show which model/workspace produced the loaded evidence."""
+    if not summary_data:
+        return
+
+    provider = _short_text(summary_data.get("provider"))
+    model = _short_text(summary_data.get("model_name"))
+    workspace = _short_text(summary_data.get("workspace_path"))
+    metrics = _metrics_for_summary(summary_data)
+    fallback = _evidence_bool(metrics.get("local_fallback_used", summary_data.get("local_fallback_used")))
+    repair_source = _friendly_repair_source(summary_data)
+    runtime = _short_text(summary_data.get("target_runtime"))
+
+    st.markdown(f"### {title}")
+    cols = st.columns(4)
+    with cols[0]:
+        _card("Provider", provider)
+    with cols[1]:
+        _card("Model", model)
+    with cols[2]:
+        _card("Runtime", runtime)
+    with cols[3]:
+        _card("Fallback used", fallback)
+
+    st.markdown(
+        f"""
+        <div class="soft-panel">
+          <b>Workspace:</b> <code>{workspace}</code><br>
+          <b>Repair source:</b> {_short_text(repair_source)}<br>
+          <b>Evidence file:</b> <code>{_short_text(summary_data.get('candidate_report'))}</code>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -315,6 +447,8 @@ with run_tab:
         else:
             st.warning("Run loaded, but one or more validation checks need review.")
 
+        _render_run_identity(summary_data, "Run identity")
+
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             _card("Dataset", summary_data.get("dataset"))
@@ -350,8 +484,8 @@ with run_tab:
             f"""
             <div class="soft-panel">
             <b>Changed file:</b> {_short_text(summary_data.get('detection_file_path'))}<br>
-            <b>Patch source:</b> LLM-generated patch<br>
-            <b>Local fallback used:</b> {str(metrics.get('local_fallback_used', False)).lower()}<br><br>
+            <b>Patch source:</b> {_friendly_patch_source(summary_data, metrics)}<br>
+            <b>Local fallback used:</b> {_evidence_bool(metrics.get('local_fallback_used', summary_data.get('local_fallback_used')))}<br><br>
             <span class="muted">{_short_text(issue_summary, 'The run evidence contains the bug location, generated patch and validation result.')}</span>
             </div>
             """,
@@ -395,6 +529,8 @@ with comparison_tab:
 
         file_path = _short_text(comparison_data.get("file_path"), selected_file or "Not recorded")
         st.markdown(f"**File under review:** `{file_path}`")
+        _render_run_identity(summary_data, "Run identity for this comparison")
+
 
         original = comparison_data.get("original_source") or ""
         updated = comparison_data.get("updated_source") or ""

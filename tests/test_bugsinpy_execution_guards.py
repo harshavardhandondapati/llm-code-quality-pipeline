@@ -9,7 +9,9 @@ from pathlib import Path
 
 from llm_pipeline.datasets.bugsinpy import classify_bugsinpy_test_result
 from llm_pipeline.repair.apply_patch import (
+    _apply_llm_patch_by_search,
     _compile_after_patch,
+    _normalise_patch_block,
     _repair_scope_violation,
     apply_generated_patch,
 )
@@ -279,3 +281,35 @@ def test_runtime_test_error_counts_as_reproduced_bug(tmp_path: Path) -> None:
 
     assert classify_bugsinpy_test_result(result) == "failed"
     assert workflow_runner._baseline_failed(result, dataset="bugsinpy") is True
+
+def test_patch_block_preserves_python_triple_quotes() -> None:
+    block = 'def helper():\n    """Valid docstring."""\n    return 1\n'
+
+    assert _normalise_patch_block(block) == block
+
+
+def test_search_apply_preserves_triple_quoted_docstring(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    source = project / "package" / "target.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "def target():\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+
+    patch = (
+        "--- a/package/target.py\n"
+        "+++ b/package/target.py\n"
+        "@@ ... @@\n"
+        "-def target():\n"
+        "-    return 1\n"
+        "+def target():\n"
+        '+    """Valid docstring."""\n'
+        "+    return 2\n"
+    )
+
+    assert _apply_llm_patch_by_search(project, patch) is True
+    updated = source.read_text(encoding="utf-8")
+    assert '"""Valid docstring."""' in updated
+    compile(updated, str(source), "exec")

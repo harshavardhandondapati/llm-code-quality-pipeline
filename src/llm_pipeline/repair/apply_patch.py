@@ -620,12 +620,13 @@ def _clean_llm_patch_text(patch_text: str) -> str:
 
 
 def _normalise_patch_block(block: str) -> str:
-    """Remove accidental JSON-string suffixes from LLM patch context lines."""
-    fixed_lines: list[str] = []
-    for line in block.splitlines(keepends=True):
-        line = line.replace('",\n', "\n").replace('"\n', "\n")
-        fixed_lines.append(line)
-    return "".join(fixed_lines)
+    """Return parsed source blocks unchanged.
+
+    JSON/string cleanup happens before unified-diff parsing in
+    ``_clean_llm_patch_text``. Mutating individual source lines here is unsafe
+    because removing a trailing quote can corrupt valid Python docstrings.
+    """
+    return block
 
 
 def _apply_single_line_change_with_context(target: Path, old_block: str, new_block: str) -> bool:

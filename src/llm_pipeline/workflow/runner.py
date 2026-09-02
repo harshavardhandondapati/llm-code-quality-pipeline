@@ -5,6 +5,7 @@ import re
 
 import json
 import subprocess
+import shutil
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -73,6 +74,117 @@ def _write_candidate_reports(
     return run_report
 
 
+
+def _prepared_bugsinpy_cache_root(
+    workspace_root: Path | str,
+    project: str,
+    bug_id: str,
+) -> Path:
+    """Return the stable preparation cache for one BugsInPy bug."""
+    safe_project = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(project)).strip("._-")
+    safe_bug = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(bug_id)).strip("._-")
+    if not safe_project or not safe_bug:
+        raise ValueError("project and bug_id must produce a safe cache key")
+    root = Path(workspace_root).expanduser().resolve()
+    return root / ".prepared_baselines" / "bugsinpy" / f"{safe_project}_{safe_bug}"
+
+
+def _load_prepared_bugsinpy_baseline(
+    cache_root: Path,
+) -> BaselineReproductionResult | None:
+    """Load a verified cached baseline when its prepared project still exists."""
+    summary = cache_root / "outputs" / "baseline_reproduction.json"
+    if not summary.is_file():
+        return None
+
+    try:
+        baseline = BaselineReproductionResult.model_validate(
+            json.loads(summary.read_text(encoding="utf-8"))
+        )
+    except Exception:
+        return None
+
+    project_path = baseline.checkout.bug_case.workspace_path
+    if not project_path.is_dir():
+        return None
+    if not baseline.setup_succeeded or not _baseline_failed(baseline.test_result):
+        return None
+    return baseline
+
+
+def _prepare_or_reuse_bugsinpy_baseline(
+    *,
+    adapter: Any,
+    project: str,
+    bug_id: str,
+    workspace_root: Path | str,
+) -> tuple[BaselineReproductionResult, bool, Path]:
+    """Prepare BugsInPy once, then reuse the same environment on later runs."""
+    cache_root = _prepared_bugsinpy_cache_root(workspace_root, project, bug_id)
+    cached = _load_prepared_bugsinpy_baseline(cache_root)
+
+    if cached is not None:
+        # A previous model run may have modified tracked source files in the
+        # prepared checkout. Restore the benchmark's buggy revision before reuse.
+        _reset_project_changes(cached.checkout.bug_case.workspace_path)
+        return cached, True, cache_root
+
+    # Never reuse a partial/stale preparation.
+    if cache_root.exists():
+        shutil.rmtree(cache_root, ignore_errors=True)
+
+    cache_manager = WorkspaceManager(cache_root.parent)
+    cache_workspace = cache_manager.create_workspace(cache_root.name)
+
+    checkout = adapter.checkout_bug(project, bug_id, cache_workspace)
+    compile_result = adapter.compile_project(checkout)
+    _install_checked_out_project(checkout.bug_case.workspace_path, cache_workspace.logs)
+    test_result = (
+        adapter.run_triggering_tests(checkout)
+        if compile_result.succeeded
+        else None
+    )
+
+    baseline = BaselineReproductionResult(
+        checkout=checkout,
+        compile_result=compile_result,
+        test_result=test_result,
+        summary_file=cache_workspace.outputs / "baseline_reproduction.json",
+    )
+    baseline.summary_file.write_text(
+        json.dumps(baseline.model_dump(mode="json"), indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return baseline, False, cache_root
+
+
+def _checkout_for_current_run(prepared_checkout: Any, workspace: Any) -> Any:
+    """Point future command logs at this run while retaining the prepared project."""
+    source_log = Path(prepared_checkout.log_file)
+    source_logs = source_log.parent
+    workspace.logs.mkdir(parents=True, exist_ok=True)
+
+    # Copy preparation logs so every run remains inspectable even when its
+    # checkout/initial compile/test were reused rather than re-executed.
+    if source_logs.is_dir():
+        for source in source_logs.glob("*.json"):
+            try:
+                shutil.copy2(source, workspace.logs / source.name)
+            except OSError:
+                pass
+
+    current_checkout_log = workspace.logs / "bugsinpy_checkout.json"
+    metadata = dict(prepared_checkout.bug_case.metadata)
+    metadata["checkout_log"] = str(current_checkout_log)
+    bug_case = prepared_checkout.bug_case.model_copy(update={"metadata": metadata})
+    return prepared_checkout.model_copy(
+        update={
+            "bug_case": bug_case,
+            "log_file": current_checkout_log,
+        }
+    )
+
+
 def run_final_pipeline(
     *,
     dataset: str = "bugsinpy",
@@ -94,10 +206,30 @@ def run_final_pipeline(
     steps: list[Step] = []
 
     adapter.validate_environment(workspace.root)
-    checkout = adapter.checkout_bug(project, bug_id, workspace)
-    compile_result = adapter.compile_project(checkout)
-    _install_checked_out_project(checkout.bug_case.workspace_path, workspace.logs)
-    test_result = adapter.run_triggering_tests(checkout) if compile_result.succeeded else None
+    baseline_reused = False
+    baseline_cache_root: Path | None = None
+
+    if selected_dataset == "bugsinpy":
+        prepared_baseline, baseline_reused, baseline_cache_root = (
+            _prepare_or_reuse_bugsinpy_baseline(
+                adapter=adapter,
+                project=project,
+                bug_id=bug_id,
+                workspace_root=settings.workspace_root,
+            )
+        )
+        checkout = _checkout_for_current_run(prepared_baseline.checkout, workspace)
+        compile_result = prepared_baseline.compile_result
+        test_result = prepared_baseline.test_result
+    else:
+        checkout = adapter.checkout_bug(project, bug_id, workspace)
+        compile_result = adapter.compile_project(checkout)
+        _install_checked_out_project(checkout.bug_case.workspace_path, workspace.logs)
+        test_result = (
+            adapter.run_triggering_tests(checkout)
+            if compile_result.succeeded
+            else None
+        )
 
     baseline = BaselineReproductionResult(
         checkout=checkout,
@@ -105,9 +237,39 @@ def run_final_pipeline(
         test_result=test_result,
         summary_file=workspace.outputs / "baseline_reproduction.json",
     )
-    baseline.summary_file.write_text(json.dumps(baseline.model_dump(mode="json"), indent=2), encoding="utf-8")
+    baseline.summary_file.write_text(
+        json.dumps(baseline.model_dump(mode="json"), indent=2) + "\n",
+        encoding="utf-8",
+    )
     baseline_failed = _baseline_failed(test_result)
-    steps.append(Step("baseline_reproduction", "passed" if baseline_failed else "failed"))
+    (workspace.outputs / "baseline_reuse.json").write_text(
+        json.dumps(
+            {
+                "prepared_baseline_reused": baseline_reused,
+                "cache_scope": (
+                    str(baseline_cache_root)
+                    if baseline_cache_root is not None
+                    else None
+                ),
+                "note": (
+                    "Initial BugsInPy checkout/compile/failing-test evidence was reused; "
+                    "post-repair validation is still executed for this model run."
+                    if baseline_reused
+                    else "Baseline preparation executed for this run."
+                ),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    steps.append(
+        Step(
+            "baseline_reproduction",
+            "passed" if baseline_failed else "failed",
+            "reused prepared BugsInPy baseline" if baseline_reused else "",
+        )
+    )
 
     record = {
         "dataset": checkout.bug_case.dataset,
@@ -118,6 +280,7 @@ def run_final_pipeline(
         "target_python": checkout.bug_case.metadata.get("python_version"),
         "target_runtime": checkout.bug_case.metadata.get("python_version") or checkout.bug_case.language,
         "baseline_failure_observed": baseline_failed,
+        "baseline_reused": baseline_reused,
         "workspace_path": str(workspace.root),
         "project_path": str(checkout.bug_case.workspace_path),
     }
@@ -195,6 +358,26 @@ def run_final_pipeline(
     client = _create_model_client(provider, active_model_name, settings)
     real_llm = provider.lower() == "openrouter"
     source_context_json = source_context.model_dump(mode="json")
+    if real_llm:
+        file_candidates = _add_file_localisation_context(
+            source_context_json,
+            checkout,
+        )
+        (workspace.outputs / "file_localisation_context.json").write_text(
+            json.dumps(
+                {
+                    "localisation_level": "file" if file_candidates else "unresolved",
+                    "candidate_files": file_candidates,
+                    "method_hint_supplied": False,
+                    "line_hint_supplied": False,
+                    "fixed_source_supplied": False,
+                    "official_patch_supplied": False,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
     bug_prompt = build_bug_detection_prompt(source_context_json, real_llm=real_llm)
     bug_prompt.setdefault("metadata", {})["project_path"] = str(checkout.bug_case.workspace_path)
@@ -587,21 +770,150 @@ def _bugsinpy_command(command_name: str) -> str | None:
     return shutil.which(command_name)
 
 
-def _initial_focused_file(checkout: Any) -> str | None:
-    """Return the first likely affected file for real-LLM prompt focusing."""
-    changed_files = checkout.bug_case.metadata.get("changed_files", [])
+
+def _looks_like_test_source(relative_path: str) -> bool:
+    """Return whether a source path is clearly a test rather than application code."""
+    path = relative_path.replace("\\", "/")
+    parts = [part.lower() for part in path.split("/") if part]
+    name = parts[-1] if parts else ""
+    return (
+        "tests" in parts
+        or "test" in parts
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+        or name.endswith("test.java")
+        or name.endswith("tests.java")
+    )
+
+
+def _source_extension_for_language(language: str) -> str | None:
+    value = str(language or "").lower().strip()
+    if value == "python":
+        return ".py"
+    if value == "java":
+        return ".java"
+    return None
+
+
+def _git_changed_source_files(checkout: Any) -> list[str]:
+    """Derive BugsInPy file-level scope from its recorded buggy/fixed revisions."""
+    bug_case = checkout.bug_case
+    root = bug_case.workspace_path.expanduser().resolve()
+    buggy = str(bug_case.buggy_revision or "").strip()
+    fixed = str(bug_case.fixed_revision or "").strip()
+    extension = _source_extension_for_language(bug_case.language)
+
+    if not buggy or not fixed or not extension:
+        return []
+
+    completed = subprocess.run(
+        ["git", "diff", "--name-only", buggy, fixed, "--"],
+        cwd=root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        timeout=30,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return []
+
+    result: list[str] = []
+    for raw in completed.stdout.splitlines():
+        relative = raw.strip().replace("\\", "/")
+        if not relative or not relative.lower().endswith(extension):
+            continue
+        target = (root / relative).resolve()
+        if root not in target.parents and target != root:
+            continue
+        if target.is_file() and relative not in result:
+            result.append(relative)
+    return result
+
+
+def _file_localisation_candidates(checkout: Any) -> list[str]:
+    """Return generic benchmark file-level candidates without method/line guidance."""
+    bug_case = checkout.bug_case
+    root = bug_case.workspace_path.expanduser().resolve()
+    extension = _source_extension_for_language(bug_case.language)
+
+    changed_files = bug_case.metadata.get("changed_files", [])
     if isinstance(changed_files, str):
         changed_files = [changed_files]
-    if isinstance(changed_files, list):
-        for item in changed_files:
-            relative = str(item).strip()
-            if relative and (checkout.bug_case.workspace_path / relative).is_file():
-                return relative
+    if not isinstance(changed_files, list):
+        changed_files = []
 
-    # Preserve the known final Python demonstration behaviour.
-    if checkout.bug_case.project.lower() == "httpie" and str(checkout.bug_case.bug_id) == "1":
-        return "httpie/downloads.py"
-    return None
+    candidates: list[str] = []
+    for item in changed_files:
+        relative = str(item).strip().replace("\\", "/")
+        if not relative:
+            continue
+        if extension and not relative.lower().endswith(extension):
+            continue
+        target = (root / relative).resolve()
+        if root not in target.parents and target != root:
+            continue
+        if target.is_file() and relative not in candidates:
+            candidates.append(relative)
+
+    # Some BugsInPy checkouts (including older httpie metadata) do not populate
+    # changed_files. The benchmark still records buggy/fixed commit IDs, so use
+    # only the names from `git diff --name-only`; no fixed source or patch content
+    # is read or supplied to the model.
+    if not candidates and str(bug_case.dataset).lower() == "bugsinpy":
+        candidates = _git_changed_source_files(checkout)
+
+    non_tests = [path for path in candidates if not _looks_like_test_source(path)]
+    return non_tests or candidates
+
+
+def _add_file_localisation_context(
+    source_context_json: dict[str, Any],
+    checkout: Any,
+    *,
+    max_source_characters: int = 140000,
+    max_source_files: int = 3,
+) -> list[str]:
+    """Attach bounded source for file-level guided repair, without method/line hints."""
+    candidates = _file_localisation_candidates(checkout)
+    if not candidates:
+        return []
+
+    root = checkout.bug_case.workspace_path.expanduser().resolve()
+    source_by_file: dict[str, str] = {}
+    remaining = max_source_characters
+
+    for index, relative in enumerate(candidates[:max_source_files]):
+        if remaining <= 0:
+            break
+        target = (root / relative).resolve()
+        try:
+            content = target.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        files_left = max(1, min(len(candidates), max_source_files) - index)
+        allowance = max(1, remaining // files_left)
+        selected = content[:allowance]
+        source_by_file[relative] = selected
+        remaining -= len(selected)
+
+    additional = source_context_json.setdefault("additional_context", {})
+    if not isinstance(additional, dict):
+        additional = {}
+        source_context_json["additional_context"] = additional
+
+    additional["file_localisation_level"] = "file"
+    additional["file_localisation_guidance"] = candidates
+    additional["file_localisation_source"] = source_by_file
+    additional["file_localisation_ground_truth_scope"] = "file_paths_only"
+    return candidates
+
+
+def _initial_focused_file(checkout: Any) -> str | None:
+    """Return the first generic file-level candidate, when available."""
+    candidates = _file_localisation_candidates(checkout)
+    return candidates[0] if candidates else None
 
 
 def _fix_contains_change(content: dict[str, Any]) -> bool:

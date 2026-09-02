@@ -19,7 +19,7 @@ The final Java evidence must be generated with local fallback disabled and witho
 2. Reproduce the baseline failure.
 3. Save the original source snapshot.
 4. Build source context from the failure, triggering tests and project files.
-5. Ask the selected model to localise the defect.
+5. Provide file-level repair scope and ask the selected model to localise the defective logic within that source.
 6. Ask the model to generate a repair.
 7. Apply the repair.
 8. Save the repaired source snapshot.
@@ -33,7 +33,7 @@ For Defects4J cases that report more than one triggering test, the current adapt
 
 ## Research safeguards
 
-The final pipeline runner does not use benchmark changed-file metadata to select prompt context. Local fallback is disabled by default for final evidence:
+For real-model repair runs, benchmark information is used only to provide file-level repair scope. The model is not given the faulty method, line, expected edit, official patch or fixed source before generation. Local fallback is disabled by default for final evidence:
 
 ```text
 PIPELINE_ALLOW_LOCAL_FALLBACK=false
@@ -41,6 +41,8 @@ PIPELINE_CONTEXT_USE_BENCHMARK_HINTS=false
 ```
 
 The benchmark fixed source can be saved after validation for comparison, but it is not used to generate a real-model repair when fallback is disabled.
+
+BugsInPy environment preparation is cached per project/bug within the runtime workspace so repeated model runs can reuse the verified buggy baseline. Each model run still performs its own post-repair validation. The runtime cache is ephemeral on hosting services unless persistent storage is configured.
 
 ## Main folders
 

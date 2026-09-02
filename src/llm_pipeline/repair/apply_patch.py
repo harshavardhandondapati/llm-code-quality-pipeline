@@ -629,6 +629,24 @@ def _test_output_passed(result: CommandResult, *, dataset: str | None = None) ->
         return int(defects4j_match.group(1)) == 0
 
     if dataset_name == "bugsinpy":
+        # BugsInPy's shell wrapper can itself exit 0 even when the inner pytest
+        # process crashes. Reject explicit execution/test failures before using
+        # the wrapper return code as the success signal.
+        fatal_markers = [
+            "traceback (most recent call last)",
+            "modulenotfounderror",
+            "importerror",
+            "assertionerror",
+            "attributeerror",
+            "syntaxerror",
+            "collection error",
+            "errors during collection",
+            "= failed",
+            " failed,",
+            " failures ",
+        ]
+        if any(marker in output for marker in fatal_markers):
+            return False
         return result.succeeded
 
     if result.succeeded:

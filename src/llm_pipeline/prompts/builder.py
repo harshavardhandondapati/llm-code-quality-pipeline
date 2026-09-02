@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -56,31 +57,135 @@ def _selected_files(source_context: Mapping[str, Any]) -> list[str]:
     return [str(item) for item in selected if str(item).strip()]
 
 
-def _failure_output_for_prompt(source_context: Mapping[str, Any], *, real_llm: bool) -> str:
-    """Return prompt-safe failure output.
 
-    The raw benchmark output is still saved as evidence in baseline_reproduction.json.
-    For real LLMs, dependency/test-runner tracebacks can dominate the prompt and
-    make the model diagnose the environment instead of the benchmark application bug.
-    """
+_PYTHON_MODULE_REFERENCE = re.compile(
+    r"<module\s+['\"](?P<module>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)['\"]>",
+    re.IGNORECASE,
+)
+
+_FAILURE_SIGNAL_PATTERN = re.compile(
+    r"(?:\b[A-Za-z_]\w*(?:Error|Exception)\b|"
+    r"does not have the attribute|"
+    r"failing tests?:|"
+    r"assert(?:ion)?\s*error|"
+    r"\bexpected\b|\bactual\b|"
+    r"java\.lang\.)",
+    re.IGNORECASE,
+)
+
+
+def _failure_signal_lines(output: str, *, limit: int = 16) -> list[str]:
+    """Keep concise defect signals from otherwise noisy benchmark output."""
+    selected: list[str] = []
+    seen: set[str] = set()
+
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if not (
+            _PYTHON_MODULE_REFERENCE.search(line)
+            or _FAILURE_SIGNAL_PATTERN.search(line)
+        ):
+            continue
+        if line not in seen:
+            seen.add(line)
+            selected.append(line)
+        if len(selected) >= limit:
+            break
+
+    for match in _PYTHON_MODULE_REFERENCE.finditer(output):
+        module_name = match.group("module")
+        probable_path = module_name.replace(".", "/") + ".py"
+        note = (
+            f"Observed Python module reference: {module_name} "
+            f"(probable project source path: {probable_path})"
+        )
+        if note not in seen:
+            seen.add(note)
+            selected.append(note)
+        if len(selected) >= limit:
+            break
+
+    return selected[:limit]
+
+
+def _file_localisation_paths(source_context: Mapping[str, Any]) -> list[str]:
+    additional = _additional_context(source_context)
+    files = additional.get("file_localisation_guidance") or []
+    if isinstance(files, str):
+        files = [files]
+    if not isinstance(files, list):
+        return []
+    return [str(item).strip() for item in files if str(item).strip()]
+
+
+def _file_localisation_for_prompt(source_context: Mapping[str, Any]) -> str:
+    """Render the file-level scope and bounded candidate source for real LLMs."""
+    additional = _additional_context(source_context)
+    files = _file_localisation_paths(source_context)
+    sources = additional.get("file_localisation_source") or {}
+    if not files:
+        return ""
+
+    lines = [
+        "File-level repair scope:",
+        "The benchmark supplies the following candidate application source file path(s):",
+    ]
+    lines.extend(f"- {path}" for path in files)
+    lines.extend(
+        [
+            "Use these paths as the repair scope and return one of them in file_path.",
+            "Determine the defective function, faulty logic and repair yourself from the buggy source and failing-test evidence.",
+            "No method name, faulty line, expected code change, official patch or fixed source is supplied as guidance.",
+        ]
+    )
+
+    if isinstance(sources, Mapping):
+        for path in files:
+            content = str(sources.get(path) or "")
+            if not content:
+                continue
+            lines.extend(
+                [
+                    "",
+                    f"--- candidate buggy source: {path} ---",
+                    content,
+                    f"--- end candidate buggy source: {path} ---",
+                ]
+            )
+    return "\n".join(lines)
+
+
+def _failure_output_for_prompt(source_context: Mapping[str, Any], *, real_llm: bool) -> str:
+    """Return concise failure evidence plus optional file-level repair scope."""
     output = str(source_context.get("failure_output", ""))
     if not real_llm:
         return output
 
     lowered = output.lower()
     noisy = any(pattern in lowered for pattern in _ENVIRONMENT_NOISE_PATTERNS)
-    if not noisy:
-        return output[:4000]
 
-    message = (
-        "The full baseline output is saved in the evidence files. It contains test-runner or dependency "
-        "noise from the benchmark execution environment, so it is not used as the primary "
-        "localisation signal for the real LLM prompt. The candidate has already been accepted because "
-        "the buggy benchmark version reproduced a baseline failure. Diagnose and patch the application "
-        "source-code defect using the supplied source snippets."
-    )
+    if noisy:
+        message = (
+            "The full baseline output is saved in the evidence files. Verbose test-runner "
+            "or dependency output has been reduced below while retaining concise signals "
+            "from the reproduced buggy execution."
+        )
+        signals = _failure_signal_lines(output)
+        if signals:
+            message += "\n\nObserved failure signal(s):\n" + "\n".join(
+                f"- {signal}" for signal in signals
+            )
+    else:
+        message = output[:4000]
+
+    file_scope = _file_localisation_for_prompt(source_context)
+    if file_scope:
+        message = (message.rstrip() + "\n\n" + file_scope).strip()
 
     return message.strip()
+
 
 
 def _benchmark_guidance(
@@ -100,6 +205,13 @@ def _benchmark_guidance(
         "- Focus on the checked-out project source code and the triggering test behaviour.",
         "- A generated repair will be accepted only if it applies to project files and passes the triggering tests.",
     ]
+    file_scope = _file_localisation_paths(source_context)
+    if file_scope:
+        guidance.append(
+            "- File-level benchmark scope is supplied for this repair task; "
+            "return file_path as one of the listed candidate files and localise the defective logic within it."
+        )
+        guidance.extend(f"  - {item}" for item in file_scope)
     if selected:
         guidance.append("- Source-context file(s) supplied to you:")
         guidance.extend(f"  - {item}" for item in selected)

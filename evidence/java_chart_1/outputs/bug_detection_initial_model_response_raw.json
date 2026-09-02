@@ -2,5 +2,5 @@
   "provider": "openrouter",
   "model_name": "deepseek/deepseek-v4-flash",
   "task": "bug_detection",
-  "raw_text": "{\n  \"bug_found\": true,\n  \"file_path\": \"source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java\",\n  \"function_name\": \"getLegendItems\",\n  \"line_start\": null,\n  \"line_end\": null,\n  \"explanation\": \"In getLegendItems(), the code returns an empty LegendItemCollection if the dataset is not null, bypassing the logic to populate legend items. The fix is to continue with the dataset when it exists and only return empty when dataset is null.\",\n  \"confidence\": 0.95\n}"
+  "raw_text": "{\": \": \"bug_found\", \"true\": \", \"}"
 }

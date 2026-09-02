@@ -1,0 +1,12 @@
+{
+  "patch_applied": false,
+  "patch_strategy": null,
+  "already_applied": false,
+  "compilation_passed": true,
+  "triggering_tests_passed": false,
+  "validation_scope": "triggering_tests",
+  "changed_files": [
+    "source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java"
+  ],
+  "failure_reason": "Patch could not be applied."
+}

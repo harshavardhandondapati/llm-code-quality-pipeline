@@ -58,7 +58,7 @@ class OpenRouterLLMClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://localhost/llm-code-quality-pipeline",
-            "X-Title": "LLM Code Quality Pipeline Dissertation Prototype",
+            "X-Title": "LLM Code Quality Pipeline",
         }
 
         started = time.perf_counter()

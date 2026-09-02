@@ -5,7 +5,7 @@
       "project": "Chart",
       "bug_id": "1",
       "language": "java",
-      "workspace_path": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff/repository/Chart_1_buggy",
+      "workspace_path": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/cloud/llm-code-quality-pipeline-git/workspaces/run_20260901_225641_efb9c06b/repository/Chart_1_buggy",
       "buggy_revision": null,
       "fixed_revision": null,
       "triggering_tests": [
@@ -21,7 +21,7 @@
         "changed_files": [
           "source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java"
         ],
-        "checkout_log": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff/logs/defects4j_checkout.json",
+        "checkout_log": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/cloud/llm-code-quality-pipeline-git/workspaces/run_20260901_225641_efb9c06b/logs/defects4j_checkout.json",
         "defects4j_version": "1b"
       }
     },
@@ -34,27 +34,27 @@
         "-v",
         "1b",
         "-w",
-        "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff/repository/Chart_1_buggy"
+        "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/cloud/llm-code-quality-pipeline-git/workspaces/run_20260901_225641_efb9c06b/repository/Chart_1_buggy"
       ],
-      "working_directory": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff",
+      "working_directory": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/cloud/llm-code-quality-pipeline-git/workspaces/run_20260901_225641_efb9c06b",
       "return_code": 0,
       "stdout": "",
-      "stderr": "Checking out 2266 to /mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/fi OK\nInit local repository...................................................... OK\nTag post-fix revision...................................................... OK\nApply patch................................................................ OK\nRun post-checkout hook..................................................... OK\nExcluding broken/flaky tests............................................... OK\nExcluding broken/flaky tests............................................... OK\nInitialize fixed program version........................................... OK\nApply patch................................................................ OK\nInitialize buggy program version........................................... OK\nDiff 2266:2264............................................................. OK\nApply patch................................................................ OK\nTag pre-fix revision....................................................... OK\nCheck out program version: Chart-1b........................................ OK",
-      "execution_time_seconds": 162.628204121007,
+      "stderr": "Checking out 2266 to /mnt/d/A_BCU_Tasks/Dissertation/Implementation/cloud/l OK\nInit local repository...................................................... OK\nTag post-fix revision...................................................... OK\nApply patch................................................................ OK\nRun post-checkout hook..................................................... OK\nExcluding broken/flaky tests............................................... OK\nExcluding broken/flaky tests............................................... OK\nInitialize fixed program version........................................... OK\nApply patch................................................................ OK\nInitialize buggy program version........................................... OK\nDiff 2266:2264............................................................. OK\nApply patch................................................................ OK\nTag pre-fix revision....................................................... OK\nCheck out program version: Chart-1b........................................ OK",
+      "execution_time_seconds": 167.2476293619984,
       "timed_out": false
     },
-    "log_file": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff/logs/defects4j_checkout.json"
+    "log_file": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/cloud/llm-code-quality-pipeline-git/workspaces/run_20260901_225641_efb9c06b/logs/defects4j_checkout.json"
   },
   "compile_result": {
     "command": [
       "defects4j",
       "compile"
     ],
-    "working_directory": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff/repository/Chart_1_buggy",
+    "working_directory": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/cloud/llm-code-quality-pipeline-git/workspaces/run_20260901_225641_efb9c06b/repository/Chart_1_buggy",
     "return_code": 0,
     "stdout": "",
     "stderr": "Running ant (compile)...................................................... OK\nRunning ant (compile.tests)................................................ OK",
-    "execution_time_seconds": 103.76157516300736,
+    "execution_time_seconds": 125.43177496400313,
     "timed_out": false
   },
   "test_result": {
@@ -64,12 +64,12 @@
       "-t",
       "org.jfree.chart.renderer.category.junit.AbstractCategoryItemRendererTests::test2947660"
     ],
-    "working_directory": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff/repository/Chart_1_buggy",
+    "working_directory": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/cloud/llm-code-quality-pipeline-git/workspaces/run_20260901_225641_efb9c06b/repository/Chart_1_buggy",
     "return_code": 0,
     "stdout": "Failing tests: 1\n  - org.jfree.chart.renderer.category.junit.AbstractCategoryItemRendererTests::test2947660",
     "stderr": "Running ant (compile.tests)................................................ OK\nRunning ant (run.dev.tests)................................................ OK",
-    "execution_time_seconds": 36.235192131003714,
+    "execution_time_seconds": 40.90284851600154,
     "timed_out": false
   },
-  "summary_file": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/java/final-openrouter-v6-multilanguage/llm-code-quality-pipeline/workspaces/run_20260808_191055_94ffe0ff/outputs/baseline_reproduction.json"
+  "summary_file": "/mnt/d/A_BCU_Tasks/Dissertation/Implementation/cloud/llm-code-quality-pipeline-git/workspaces/run_20260901_225641_efb9c06b/outputs/baseline_reproduction.json"
 }

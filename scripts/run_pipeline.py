@@ -27,8 +27,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bug-id", default="1")
     parser.add_argument("--provider", default="mock", choices=["mock", "openrouter"])
     parser.add_argument("--model", default=None, help="Model name, for example mock-model or openrouter/free")
-    parser.add_argument("--approval", default="approved", choices=["approved", "rejected", "needs_changes"])
-    parser.add_argument("--reviewer", default="Hari")
+    parser.add_argument(
+        "--approval",
+        default="pending",
+        choices=["pending", "approved", "rejected", "needs_changes"],
+        help="Human review decision. Omit this option to leave the run awaiting review.",
+    )
+    parser.add_argument("--reviewer", default="", help="Reviewer name for a completed decision.")
     return parser.parse_args()
 
 
@@ -43,7 +48,7 @@ def main() -> None:
         approval=args.approval,
         reviewer=args.reviewer,
     )
-    print("Final clean end-to-end pipeline completed")
+    print("Pipeline run completed")
     print(f"dataset: {result.get('dataset')}")
     print(f"language: {result.get('language')}")
     print(f"project: {result['project']}")

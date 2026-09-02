@@ -180,7 +180,7 @@ def test_mock_httpie_fix_reads_project_file_when_available(tmp_path, monkeypatch
     assert "return candidate" in fixed
 
 
-def test_real_llm_prompt_uses_benchmark_guidance():
+def test_real_llm_prompt_uses_generic_validation_guidance():
     context = {
         "project": "httpie",
         "bug_id": "1",
@@ -197,17 +197,18 @@ def test_real_llm_prompt_uses_benchmark_guidance():
         ],
         "additional_context": {
             "selected_files": ["httpie/downloads.py"],
-            "real_llm_candidate_files": ["httpie/downloads.py"],
         },
     }
 
     prompt = build_bug_detection_prompt(context, real_llm=True, retry=True)
-    text = "\n".join(message["content"] for message in prompt["messages"])
+    prompt_text = "\n".join(message["content"] for message in prompt["messages"])
 
-    assert "accepted as a reproducible BugsInPy application bug" in text
-    assert "Do not classify the issue as a pytest" in text
-    assert "httpie/downloads.py" in text
-    assert "This is a retry" in text
+    assert "accepted as a reproducible python benchmark application bug" in prompt_text
+    assert "Do not classify the issue as a pytest" in prompt_text
+    assert "httpie/downloads.py" in prompt_text
+    assert "This is a retry" in prompt_text
+    assert "Known benchmark focus" not in prompt_text
+    assert "filesystem filename-length limits" not in prompt_text
 
 from llm_pipeline.prompts.builder import build_fix_generation_prompt
 
@@ -244,7 +245,8 @@ def test_fix_prompt_includes_focused_complete_file_for_real_llm():
     prompt = build_fix_generation_prompt(context, bug, real_llm=True, retry=True)
     text = "\n".join(message["content"] for message in prompt["messages"])
 
-    assert "complete corrected source file in fixed_files" in text
+    assert "Complete affected source file for repair" in text
+    assert "complete corrected content for this same relative path" in text
     assert "Complete affected source file for repair" in text
     assert "FULL FILE CONTENT" in text
     assert prompt["metadata"]["retry"] is True

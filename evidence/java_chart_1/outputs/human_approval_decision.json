@@ -2,8 +2,8 @@
   "project": "Chart",
   "bug_id": "1",
   "decision": "approved",
-  "reviewer": "Hari",
-  "comments": "Reviewed the generated bug analysis, patch and validation evidence.",
+  "reviewer": "Harsha",
+  "comments": "fixed",
   "allows_progress": true,
-  "decided_at_utc": "2026-08-08T19:22:25+00:00"
+  "decided_at_utc": "2026-09-01T23:20:44+00:00"
 }

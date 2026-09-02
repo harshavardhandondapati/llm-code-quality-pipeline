@@ -322,7 +322,10 @@ def build_code_comparison(
         updated_source=updated,
         benchmark_fixed_source=benchmark_fixed,
         diff_text=diff_text,
-        issue_summary=(data.get("bug_detection") or {}).get("explanation"),
+        issue_summary=(
+            (data.get("fix_generation") or {}).get("explanation")
+            or (data.get("bug_detection") or {}).get("explanation")
+        ),
         files_changed=_changed_files(data),
         original_available=bool(original),
         updated_available=bool(updated),

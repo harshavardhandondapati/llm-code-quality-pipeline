@@ -7,7 +7,9 @@
   "patch_applied": true,
   "compilation_passed": true,
   "triggering_tests_passed": true,
-  "changed_files": [],
+  "changed_files": [
+    "source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java"
+  ],
   "improved": true,
   "repair_status": "successful_repair"
 }

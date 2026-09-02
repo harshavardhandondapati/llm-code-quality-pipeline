@@ -1,9 +1,8 @@
-"""Final report generation for the LLM-assisted code quality pipeline.
+"""Generate human-readable reports from saved pipeline evidence.
 
-Batch 13 turns the evidence produced by earlier batches into a human-readable
-experiment report. It does not rerun checkout, testing, LLM prompting or patch
-application. The report is deliberately file-based so it can be inspected by an
-examiner without requiring a web server.
+Report generation does not rerun checkout, testing, LLM prompting or patch
+application. The report is deliberately file-based so it can be inspected
+without requiring a web server.
 """
 
 from __future__ import annotations

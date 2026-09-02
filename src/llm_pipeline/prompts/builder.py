@@ -56,55 +56,6 @@ def _selected_files(source_context: Mapping[str, Any]) -> list[str]:
     return [str(item) for item in selected if str(item).strip()]
 
 
-def _candidate_files(source_context: Mapping[str, Any]) -> list[str]:
-    context = _additional_context(source_context)
-    candidates = context.get("real_llm_candidate_files") or context.get("benchmark_changed_files") or []
-    if isinstance(candidates, str):
-        candidates = [candidates]
-    if not isinstance(candidates, list):
-        candidates = []
-    return [str(item) for item in candidates if str(item).strip()]
-
-
-def _known_benchmark_focus(project: str, bug_id: str) -> str:
-    project_key = str(project).lower()
-    bug_id_key = str(bug_id)
-
-    if project_key == "httpie" and bug_id_key == "1":
-        return (
-            "Known benchmark focus for this selected case:\n"
-            "- Inspect httpie/downloads.py first.\n"
-            "- The application-level repair is related to generated download filenames.\n"
-            "- Focus on filename construction / Content-Disposition filename handling and filesystem filename-length limits.\n"
-            "- A valid repair should limit/truncate the returned download filename before it is used, while preserving normal behaviour.\n"
-            "- Do not repair this by changing pytest, Python, virtual environments, or dependency versions."
-        )
-
-    if project_key == "chart" and bug_id_key == "1":
-        return (
-            "Known benchmark focus for this selected Java case:\n"
-            "- The triggering test is AbstractCategoryItemRendererTests::test2947660.\n"
-            "- Inspect AbstractCategoryItemRenderer.java and the triggering test behaviour together.\n"
-            "- Focus on legend-item generation behaviour, not syntax or formatting.\n"
-            "- For Chart 1, the target method is the plural method getLegendItems(), not the singular getLegendItem(...).\n"
-            "- A patch that only changes getLegendItem(...) is not acceptable for this selected bug.\n"
-            "- Do not modify drawRangeMarker(); it is not the target for Chart 1.\n"
-            "- Do not report if (!(condition)) versus if (!condition) as a syntax fix; that is behaviourally equivalent.\n"
-            "- Inspect this buggy source pattern in getLegendItems():\n"
-            "  int index = this.plot.getIndexOf(this);\n"
-            "  CategoryDataset dataset = this.plot.getDataset(index);\n"
-            "  if (dataset != null) {\n"
-            "      return result;\n"
-            "  }\n"
-            "  int seriesCount = dataset.getRowCount();\n"
-            "- The repair must make getLegendItems() continue when dataset exists and return safely only when dataset is missing.\n"
-            "- Return a unified diff for source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java only.\n"
-            "- A valid repair must change behaviour and pass the Defects4J triggering test."
-        )
-
-    return ""
-
-
 def _failure_output_for_prompt(source_context: Mapping[str, Any], *, real_llm: bool) -> str:
     """Return prompt-safe failure output.
 
@@ -121,15 +72,15 @@ def _failure_output_for_prompt(source_context: Mapping[str, Any], *, real_llm: b
     if not noisy:
         return output[:4000]
 
-    focus = _known_benchmark_focus(str(source_context.get("project", "")), str(source_context.get("bug_id", "")))
-    return (
+    message = (
         "The full baseline output is saved in the evidence files. It contains test-runner or dependency "
         "noise from the benchmark execution environment, so it is not used as the primary "
         "localisation signal for the real LLM prompt. The candidate has already been accepted because "
         "the buggy benchmark version reproduced a baseline failure. Diagnose and patch the application "
-        "source-code defect using the source snippets and benchmark candidate-file guidance below.\n\n"
-        + focus
-    ).strip()
+        "source-code defect using the supplied source snippets."
+    )
+
+    return message.strip()
 
 
 def _benchmark_guidance(
@@ -138,31 +89,17 @@ def _benchmark_guidance(
     retry: bool = False,
     forced_focus: bool = False,
 ) -> str:
-    candidates = _candidate_files(source_context)
     selected = _selected_files(source_context)
     language = str(source_context.get("language", "source-code"))
-    project = str(source_context.get("project", "")).lower()
-    bug_id = str(source_context.get("bug_id", ""))
-    benchmark_phrase = (
-        "BugsInPy application bug"
-        if project == "httpie" and bug_id == "1"
-        else f"{language} benchmark application bug"
-    )
     guidance = [
         "Benchmark and validation guidance:",
-        f"- The baseline failure has already been accepted as a reproducible {benchmark_phrase}.",
+        f"- The baseline failure has already been accepted as a reproducible {language} benchmark application bug.",
         "- The raw test output may include test-runner, dependency, Python, Java, Maven or Gradle noise; do not use that as the final diagnosis when project source indicates an application defect.",
         "- Do not classify the issue as a pytest, Python-version, Java-version, dependency, Maven, Gradle, or test-runner problem unless supplied project source proves there is no application defect.",
         "- Do not propose fixes to test frameworks, virtual environments, build tools or dependency versions unless supplied project source proves there is no application defect.",
         "- Focus on the checked-out project source code and the triggering test behaviour.",
         "- A generated repair will be accepted only if it applies to project files and passes the triggering tests.",
     ]
-    known_focus = _known_benchmark_focus(project, bug_id)
-    if known_focus:
-        guidance.append(known_focus)
-    if candidates:
-        guidance.append("- Benchmark candidate file(s) to inspect first:")
-        guidance.extend(f"  - {item}" for item in candidates)
     if selected:
         guidance.append("- Source-context file(s) supplied to you:")
         guidance.extend(f"  - {item}" for item in selected)
@@ -254,13 +191,37 @@ def _focused_file_block(source_context: Mapping[str, Any]) -> str:
     additional = source_context.get("additional_context", {})
     if not isinstance(additional, Mapping):
         return ""
+
     path = additional.get("focused_file_path")
     content = additional.get("focused_file_content")
     if not path or not content:
         return ""
+
+    if additional.get("focused_file_is_complete", True):
+        heading = (
+            "Complete affected source file for repair. If you use fixed_files, return the "
+            "complete corrected content for this same relative path."
+        )
+    else:
+        start = additional.get("focused_file_line_start")
+        end = additional.get("focused_file_line_end")
+        function_name = str(additional.get("focused_file_function_name") or "").strip()
+        anchor = additional.get("focused_file_anchor")
+
+        if anchor == "function_name" and function_name:
+            focus = f" around the detected function {function_name}"
+        else:
+            focus = ""
+
+        heading = (
+            f"Focused affected source excerpt for repair{focus} (lines {start}-{end}). "
+            "This is not the complete file, so return a unified diff rather than fixed_files. "
+            "Treat the earlier bug-detection explanation as a hypothesis: verify it against "
+            "this source and the failing test, and do not invent code that is not present."
+        )
+
     return (
-        "\n\nComplete affected source file for repair. If you use fixed_files, return the "
-        "complete corrected content for this same relative path.\n"
+        f"\n\n{heading}\n"
         f"--- {path} ---\n{content}\n--- end {path} ---"
     )
 
@@ -279,7 +240,7 @@ def build_fix_generation_prompt(
         "Only modify project source files. Do not modify tests, test frameworks, virtual environments, build tools, or dependency versions unless the bug evidence explicitly requires it.",
         "Return one valid JSON object only. Do not use markdown. The assistant message content must not be null.",
         "The JSON must contain patch, explanation, files_modified and fixed_files.",
-        "Preferred format for this pipeline: put the complete corrected source file in fixed_files using the affected relative path as the key.",
+        "Use fixed_files only when the complete affected file is provided. When the repair context is an excerpt, return a unified diff instead.",
         "If you provide a patch, it must be a unified diff that can be applied with git apply, using paths like a/path/to/File.ext and b/path/to/File.ext.",
     ]
     if affected_path:

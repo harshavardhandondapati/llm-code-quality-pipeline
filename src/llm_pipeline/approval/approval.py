@@ -12,9 +12,9 @@ def create_human_approval(
     *,
     candidate_record: Mapping[str, Any],
     outputs_dir: Path | str,
-    decision: str = "approved",
-    reviewer: str = "developer",
-    comments: str = "Reviewed the generated analysis, patch and validation evidence.",
+    decision: str = "pending",
+    reviewer: str = "",
+    comments: str = "",
 ) -> dict[str, Any]:
     """Save human review request and decision files."""
     outputs = Path(outputs_dir)
@@ -42,10 +42,10 @@ def create_human_approval(
     (outputs / "approval_request.txt").write_text(_as_text(review), encoding="utf-8")
 
     normalised = decision.strip().lower()
-    if normalised not in {"approved", "rejected", "needs_changes"}:
-        raise ValueError("decision must be approved, rejected, or needs_changes")
-    if not reviewer.strip():
-        raise ValueError("reviewer is required")
+    if normalised not in {"pending", "approved", "rejected", "needs_changes"}:
+        raise ValueError("decision must be pending, approved, rejected, or needs_changes")
+    if normalised != "pending" and not reviewer.strip():
+        raise ValueError("reviewer is required for a completed review decision")
 
     approval = {
         "project": candidate_record.get("project"),
@@ -54,7 +54,11 @@ def create_human_approval(
         "reviewer": reviewer.strip(),
         "comments": comments.strip(),
         "allows_progress": normalised == "approved",
-        "decided_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "decided_at_utc": (
+            None
+            if normalised == "pending"
+            else datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        ),
     }
     (outputs / "human_approval_decision.json").write_text(json.dumps(approval, indent=2) + "\n", encoding="utf-8")
     (outputs / "human_approval_decision.txt").write_text(_as_text(approval), encoding="utf-8")

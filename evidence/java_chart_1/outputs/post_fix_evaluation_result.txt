@@ -6,6 +6,6 @@ baseline_failure_observed: True
 patch_applied: True
 compilation_passed: True
 triggering_tests_passed: True
-changed_files: []
+changed_files: ['source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java']
 improved: True
 repair_status: successful_repair

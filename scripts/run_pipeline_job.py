@@ -20,6 +20,7 @@ def _add_src_to_path() -> None:
 _add_src_to_path()
 
 from llm_pipeline.ui.job_store import read_job, write_job, utc_now  # noqa: E402
+from llm_pipeline.ui.review_actions import is_ready_for_human_review  # noqa: E402
 from llm_pipeline.workflow import run_final_pipeline  # noqa: E402
 
 
@@ -44,18 +45,30 @@ def main() -> int:
             bug_id=str(job["bug_id"]),
             provider=str(job["provider"]),
             model_name=str(job["model_name"]),
-            approval="approved",
-            reviewer=str(job.get("reviewer") or "web-ui"),
+            approval="pending",
+            reviewer="unassigned",
         )
         job["result"] = result
-        job["successful"] = bool(result.get("successful"))
-        job["status"] = "successful" if result.get("successful") else "failed"
         job["workspace_path"] = result.get("workspace_path")
         job["candidate_report"] = result.get("candidate_report")
-        job["message"] = "Run completed successfully." if result.get("successful") else "Run completed with failed checks."
+
+        if is_ready_for_human_review(result):
+            job["successful"] = None
+            job["status"] = "awaiting_review"
+            job["message"] = (
+                "Technical validation passed. Human review is required before "
+                "this run can be accepted."
+            )
+            exit_code = 0
+        else:
+            job["successful"] = False
+            job["status"] = "failed"
+            job["message"] = "Run completed with failed technical checks."
+            exit_code = 2
+
         job["updated_at_utc"] = utc_now()
         write_job(job)
-        return 0 if result.get("successful") else 2
+        return exit_code
     except Exception as exc:  # pragma: no cover - subprocess guard
         job["status"] = "failed"
         job["successful"] = False

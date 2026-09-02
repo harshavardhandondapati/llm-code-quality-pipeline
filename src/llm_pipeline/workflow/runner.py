@@ -1,6 +1,7 @@
 """Run the complete dissertation pipeline for one benchmark candidate."""
 
 from __future__ import annotations
+import re
 
 import json
 import subprocess
@@ -8,6 +9,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
+from uuid import uuid4
 
 from llm_pipeline.config import get_settings
 from llm_pipeline.context.file_discovery import FileDiscovery
@@ -43,6 +45,34 @@ class Step:
     detail: str = ""
 
 
+def _write_candidate_reports(
+    *,
+    record: Mapping[str, Any],
+    workspace_outputs: Path,
+    results_directory: Path,
+    dataset: str,
+) -> Path:
+    """Save an immutable run report and update the legacy latest-run pointer."""
+    payload = {"records": [dict(record)]}
+    content = json.dumps(payload, indent=2) + "\n"
+
+    run_report = workspace_outputs / "candidate_selection.json"
+    run_report.parent.mkdir(parents=True, exist_ok=True)
+    run_report.write_text(content, encoding="utf-8")
+
+    # Older CLI commands still read results/<dataset>_candidate_selection.json.
+    # Keep that file as a convenience pointer, but never use it as run identity.
+    latest_report = results_directory / candidate_report_file_name(dataset)
+    latest_report.parent.mkdir(parents=True, exist_ok=True)
+    temporary = latest_report.with_name(
+        f".{latest_report.name}.{uuid4().hex}.tmp"
+    )
+    temporary.write_text(content, encoding="utf-8")
+    temporary.replace(latest_report)
+
+    return run_report
+
+
 def run_final_pipeline(
     *,
     dataset: str = "bugsinpy",
@@ -50,8 +80,8 @@ def run_final_pipeline(
     bug_id: str = "1",
     provider: str = "mock",
     model_name: str | None = None,
-    approval: str = "approved",
-    reviewer: str = "developer",
+    approval: str = "pending",
+    reviewer: str = "",
 ) -> dict[str, Any]:
     """Run checkout, detection, fixing, validation, approval, metrics and report."""
     settings = get_settings()
@@ -91,8 +121,12 @@ def run_final_pipeline(
         "workspace_path": str(workspace.root),
         "project_path": str(checkout.bug_case.workspace_path),
     }
-    candidate_report = settings.results_directory / candidate_report_file_name(selected_dataset)
-    candidate_report.write_text(json.dumps({"records": [record]}, indent=2) + "\n", encoding="utf-8")
+    candidate_report = _write_candidate_reports(
+        record=record,
+        workspace_outputs=workspace.outputs,
+        results_directory=settings.results_directory,
+        dataset=selected_dataset,
+    )
 
     if not baseline_failed:
         active_model_name = model_name or _default_model_name(provider, settings)
@@ -150,7 +184,8 @@ def run_final_pipeline(
         context_lines_before=settings.context_lines_before,
         context_lines_after=settings.context_lines_after,
         max_failure_output_characters=settings.max_failure_output_characters,
-        use_benchmark_hints=settings.context_use_benchmark_hints or provider.lower() == "openrouter",
+        # Final runs select prompt context without benchmark changed-file hints.
+        use_benchmark_hints=False,
     )
     source_context = builder.build(checkout.bug_case, test_result)  # type: ignore[arg-type]
     builder.save(source_context, workspace.outputs)
@@ -160,10 +195,6 @@ def run_final_pipeline(
     client = _create_model_client(provider, active_model_name, settings)
     real_llm = provider.lower() == "openrouter"
     source_context_json = source_context.model_dump(mode="json")
-    if real_llm:
-        initial_focus = _initial_focused_file(checkout)
-        if initial_focus:
-            _add_focused_file_content(source_context_json, checkout.bug_case.workspace_path, initial_focus)
 
     bug_prompt = build_bug_detection_prompt(source_context_json, real_llm=real_llm)
     bug_prompt.setdefault("metadata", {})["project_path"] = str(checkout.bug_case.workspace_path)
@@ -202,6 +233,9 @@ def run_final_pipeline(
             source_context_json,
             checkout.bug_case.workspace_path,
             str(bug_response.content.get("file_path")),
+            line_start=bug_response.content.get("line_start"),
+            line_end=bug_response.content.get("line_end"),
+            function_name=bug_response.content.get("function_name"),
         )
 
     fix_prompt = build_fix_generation_prompt(source_context_json, bug_response.content, real_llm=real_llm)
@@ -363,12 +397,17 @@ def run_final_pipeline(
     post_fix = create_post_fix_evaluation(candidate_record=record, validation=validation, outputs_dir=workspace.outputs)
     steps.append(Step("post_fix_evaluation", "passed" if post_fix.get("improved") else "failed"))
 
+    approval_comments = (
+        "Awaiting human review of the generated repair and validation evidence."
+        if approval.strip().lower() == "pending"
+        else "Reviewed the generated bug analysis, repair and validation evidence."
+    )
     human = create_human_approval(
         candidate_record=record,
         outputs_dir=workspace.outputs,
         decision=approval,
         reviewer=reviewer,
-        comments="Reviewed the generated bug analysis, patch and validation evidence.",
+        comments=approval_comments,
     )
     steps.append(Step("human_approval", "passed" if human.get("allows_progress") else "blocked"))
 
@@ -571,25 +610,136 @@ def _fix_contains_change(content: dict[str, Any]) -> bool:
     return bool(patch or (isinstance(fixed_files, dict) and any(str(v).strip() for v in fixed_files.values())))
 
 
-def _add_focused_file_content(source_context_json: dict[str, Any], project_root: Path, relative_path: str) -> None:
+def _find_function_declaration_line(
+    lines: list[str],
+    function_name: str | None,
+    preferred_line: int | None = None,
+) -> int | None:
+    """Locate a Python/Java function declaration without relying on benchmark metadata."""
+    name = str(function_name or "").strip()
+    if not name:
+        return None
+
+    escaped = re.escape(name)
+    python_decl = re.compile(rf"^\s*(?:async\s+def|def)\s+{escaped}\s*\(")
+    named_call = re.compile(rf"\b{escaped}\s*\(")
+
+    candidates: list[tuple[int, int, int]] = []
+    for number, line in enumerate(lines, start=1):
+        if not named_call.search(line):
+            continue
+
+        stripped = line.strip()
+        if stripped.startswith(("*", "//", "/*", "#", "@")):
+            continue
+
+        score = 0
+        if python_decl.search(line):
+            score = 100
+        elif "{" in stripped and not stripped.endswith(";"):
+            score = 90
+        elif re.match(r"^(?:public|protected|private)\b", stripped):
+            score = 80
+
+        if score == 0:
+            continue
+
+        distance = abs(number - preferred_line) if preferred_line else number
+        candidates.append((score, -distance, number))
+
+    if not candidates:
+        return None
+
+    return max(candidates)[2]
+
+
+def _add_focused_file_content(
+    source_context_json: dict[str, Any],
+    project_root: Path,
+    relative_path: str,
+    *,
+    line_start: int | None = None,
+    line_end: int | None = None,
+    function_name: str | None = None,
+    max_characters: int = 60000,
+    context_lines: int = 180,
+) -> None:
+    """Add the full file or a repair excerpt centred on model localisation."""
     if not relative_path:
         return
+
     root = project_root.expanduser().resolve()
     target = (root / relative_path).resolve()
     if root not in target.parents and target != root:
         return
     if not target.is_file():
         return
+
     try:
         content = target.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return
+
+    lines = content.splitlines(keepends=True)
+    total_lines = len(lines)
+
+    start = 1
+    end = total_lines
+    focused = content
+    is_complete = len(content) <= max_characters
+    anchor = "complete_file"
+
+    try:
+        detected_start = int(line_start) if line_start is not None else None
+        detected_end = int(line_end) if line_end is not None else detected_start
+    except (TypeError, ValueError):
+        detected_start = None
+        detected_end = None
+
+    if not is_complete:
+        function_line = _find_function_declaration_line(
+            lines,
+            function_name,
+            preferred_line=detected_start,
+        )
+
+        if function_line is not None:
+            anchor_start = function_line
+            anchor_end = function_line
+            anchor = "function_name"
+        elif detected_start is not None and 1 <= detected_start <= total_lines:
+            detected_end = detected_end or detected_start
+            anchor_start = detected_start
+            anchor_end = max(detected_start, min(detected_end, total_lines))
+            anchor = "line_range"
+        else:
+            anchor_start = None
+            anchor_end = None
+            anchor = "file_prefix"
+
+        if anchor_start is not None:
+            start = max(1, anchor_start - context_lines)
+            end = min(total_lines, anchor_end + context_lines)
+            focused = "".join(lines[start - 1 : end])
+            if len(focused) > max_characters:
+                focused = focused[:max_characters]
+                end = start + focused.count("\n")
+        else:
+            focused = content[:max_characters]
+            end = focused.count("\n") + 1
+
     additional = source_context_json.setdefault("additional_context", {})
     if not isinstance(additional, dict):
         additional = {}
         source_context_json["additional_context"] = additional
+
     additional["focused_file_path"] = relative_path
-    additional["focused_file_content"] = content[:60000]
+    additional["focused_file_content"] = focused
+    additional["focused_file_is_complete"] = is_complete
+    additional["focused_file_line_start"] = start
+    additional["focused_file_line_end"] = end
+    additional["focused_file_anchor"] = anchor
+    additional["focused_file_function_name"] = str(function_name or "").strip()
 
 
 

@@ -13,7 +13,14 @@ from typing import Any
 from uuid import uuid4
 
 
-TERMINAL_STATUSES = {"successful", "failed", "interrupted"}
+TERMINAL_STATUSES = {
+    "successful",
+    "failed",
+    "interrupted",
+    "awaiting_review",
+    "rejected",
+    "needs_changes",
+}
 
 
 def utc_now() -> str:

@@ -1,61 +1,62 @@
 # LLM Code Quality Pipeline
 
-This repository contains a dissertation implementation for an LLM-assisted code quality pipeline. It supports Python bugs from BugsInPy and Java bugs from Defects4J. The same pipeline can be run locally or from the deployed Streamlit app.
+This repository contains the implementation used for an MSc dissertation on an LLM-assisted code quality workflow. It supports Python bugs from BugsInPy and Java bugs from Defects4J and can be run from the command line or through the Streamlit interface.
 
-The pipeline records each run as evidence: original buggy file, LLM-updated file, optional benchmark fixed reference, prompts, model responses, patch diff, validation result, metrics and final report.
+Each benchmark run records the evidence needed to review what happened: the original source, generated repair, prompts and model responses, patch diff, validation results, human review decision, metrics and final report.
 
-## Validated examples included
+## Submitted examples
 
-| Language | Dataset | Project | Bug | Provider | Result |
+| Language | Dataset | Project | Bug | Provider | Purpose |
 | --- | --- | --- | --- | --- | --- |
-| Python | BugsInPy | httpie | 1 | OpenRouter / DeepSeek | successful |
-| Java | Defects4J | Chart | 1 | OpenRouter / DeepSeek | successful |
+| Python | BugsInPy | httpie | 1 | mock | repeatable pipeline validation |
+| Java | Defects4J | Chart | 1 | OpenRouter / DeepSeek | real-model evaluation |
 
-The Java evidence has `local_fallback_used: false`. That means the validated patch came from the LLM response, not from copied benchmark fixed code.
+The final Java evidence must be generated with local fallback disabled and without benchmark changed-file hints. The benchmark fixed version is retained only as a post-run comparison reference.
 
-## What the pipeline does
+## Pipeline stages
 
-1. Checks out the selected benchmark bug.
-2. Reproduces the baseline failure.
-3. Saves the original buggy source file before patching.
-4. Builds source-code context for the selected LLM.
-5. Asks the LLM to locate the issue.
-6. Asks the LLM to generate a patch.
-7. Applies the generated patch.
-8. Saves the updated source file after patching.
-9. Runs compile and targeted validation tests.
-10. Saves the benchmark fixed file separately as reference evidence where available.
-11. Writes JSON, text, diff and HTML evidence.
+1. Check out the selected benchmark bug.
+2. Reproduce the baseline failure.
+3. Save the original source snapshot.
+4. Build source context from the failure, triggering tests and project files.
+5. Ask the selected model to localise the defect.
+6. Ask the model to generate a repair.
+7. Apply the repair.
+8. Save the repaired source snapshot.
+9. Run compilation and triggering-test validation.
+10. Record a human review decision.
+11. Write metrics and final evidence reports.
 
-The official benchmark fixed file is captured only after the LLM repair/validation path. It is not sent to the LLM prompt and is not used to generate the patch when fallback is disabled.
+A generated repair is not classified as successful simply because it was produced by a model. The required validation checks must pass and the human review decision must allow the run to progress.
+
+For Defects4J cases that report more than one triggering test, the current adapter validates the first recorded triggering test. This is a scope limitation of the current implementation.
+
+## Research safeguards
+
+The final pipeline runner does not use benchmark changed-file metadata to select prompt context. Local fallback is disabled by default for final evidence:
+
+```text
+PIPELINE_ALLOW_LOCAL_FALLBACK=false
+PIPELINE_CONTEXT_USE_BENCHMARK_HINTS=false
+```
+
+The benchmark fixed source can be saved after validation for comparison, but it is not used to generate a real-model repair when fallback is disabled.
 
 ## Main folders
 
 ```text
-src/llm_pipeline/      pipeline source code
-scripts/               setup, verification, command-line and background-job scripts
-tests/                 automated tests
-results/               candidate reports used by the UI
-evidence/              compact final evidence for deployment and review
+src/llm_pipeline/      pipeline source
+scripts/               command-line and background-job entry points
+tests/                 automated regression tests
+results/               stable candidate-report pointers for submitted evidence
+evidence/              compact evidence included with the repository
 app.py                 Streamlit dashboard
-Dockerfile             Render/Docker deployment definition
+Dockerfile             Docker/Render deployment definition
 ```
 
-Generated runtime folders such as `.venv`, `workspaces`, `jobs`, caches, logs and API keys are not part of the clean submission package.
+Runtime folders such as `workspaces/`, `jobs/`, logs, caches, virtual environments and API keys are intentionally excluded from the clean repository.
 
-## Benchmark tools layout
-
-Local and cloud runs use this structure:
-
-```text
-tools/
-  BugsInPy/
-  defects4j/
-```
-
-The ZIP includes the tool folder placeholder and installer script, not the full cloned benchmark repositories. During Docker/Render deployment, `scripts/prepare_benchmark_tools.sh` installs BugsInPy and Defects4J into `/app/tools`. The app then discovers available projects and bug IDs from those installed tools.
-
-## Setup locally
+## Local setup
 
 ```bash
 python -m venv .venv
@@ -63,128 +64,73 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 python -m pip install -r UI_REQUIREMENTS.txt
-```
-
-Create `.env` from the example file when running a real LLM call:
-
-```bash
 cp .env.example .env
 ```
 
-Add your OpenRouter key only in `.env`. Do not commit `.env`.
+Add an OpenRouter key to `.env` only when running a real model. Do not commit `.env`.
 
-## Run automated tests
+## Automated tests
 
 ```bash
 python -m pytest -q --color=no
 ```
 
-Expected result for this package:
+The repository should finish with all tests passing. The exact count is not hard-coded because regression coverage can change during final verification.
 
-```text
-119 passed
-```
-
-## Open the dashboard locally
+## Dashboard
 
 ```bash
 python -m streamlit run app.py
 ```
 
-Open:
-
-```text
-http://localhost:8501
-```
+Open `http://localhost:8501`.
 
 The dashboard has four tabs:
 
 ```text
-Run Summary       review saved evidence
-Code Comparison   compare original, LLM-updated and benchmark fixed source
-Run Benchmark     start new background benchmark jobs
-File Review       lightweight single-file review
+Run Summary       review submitted evidence and exact runtime runs
+Code Comparison   compare original and repaired source
+Run Benchmark     start and review background benchmark jobs
+File Review       review a standalone Python or Java file
 ```
 
-## Run a benchmark from the web app
+On a fresh deployment, submitted evidence whose result report points into `evidence/` is available in Run Summary before any new runtime job is created.
 
-Use the **Run Benchmark** tab.
+## Web benchmark flow
 
-1. Select dataset: BugsInPy or Defects4J.
-2. Select project and bug ID from the discovered metadata.
-3. Select provider: mock or OpenRouter.
-4. Enter the model ID. For OpenRouter, any valid OpenRouter model ID can be entered.
-5. Keep **Disable local fallback** enabled for final evidence.
-6. Click **Start benchmark run**.
-7. Use **Refresh status** while the job runs.
-8. When successful, click **Load this run in review tabs**.
+1. Select the dataset, project and bug ID.
+2. Select `mock` or `openrouter`.
+3. Choose or enter the model ID.
+4. Keep **Disable local fallback** enabled for final evidence.
+5. Start the benchmark and refresh status while it runs.
+6. After technical validation passes, review the saved evidence.
+7. Record **Approve**, **Needs changes** or **Reject**.
+8. Load the same run in Run Summary or Code Comparison.
 
-Runs execute in a background process so the browser does not need to remain blocked during checkout, dependency setup, LLM calls and validation.
+A technically valid run remains `awaiting_review` until a reviewer records a decision.
 
-## Command-line examples
+## Command line
 
-Python / BugsInPy with mock provider:
+Without an explicit review decision, the CLI records a pending human review. The run is not classified as successful until an approval decision is supplied:
 
 ```bash
-PIPELINE_ALLOW_LOCAL_FALLBACK=false python scripts/run_pipeline.py \
-  --dataset bugsinpy \
-  --project httpie \
-  --bug-id 1 \
-  --provider mock \
-  --approval approved \
-  --reviewer Hari
+PIPELINE_ALLOW_LOCAL_FALLBACK=false python scripts/run_pipeline.py   --dataset defects4j   --project Chart   --bug-id 1   --provider openrouter   --model deepseek/deepseek-v4-flash
 ```
 
-Python / BugsInPy with OpenRouter:
+A completed decision must be explicit:
 
 ```bash
-PIPELINE_ALLOW_LOCAL_FALLBACK=false python scripts/run_pipeline.py \
-  --dataset bugsinpy \
-  --project httpie \
-  --bug-id 1 \
-  --provider openrouter \
-  --model deepseek/deepseek-v4-flash \
-  --approval approved \
-  --reviewer Hari
+PIPELINE_ALLOW_LOCAL_FALLBACK=false python scripts/run_pipeline.py   --dataset bugsinpy   --project httpie   --bug-id 1   --provider mock   --approval approved   --reviewer "Reviewer name"
 ```
 
-Java / Defects4J with OpenRouter:
-
-```bash
-PIPELINE_ALLOW_LOCAL_FALLBACK=false python scripts/run_pipeline.py \
-  --dataset defects4j \
-  --project Chart \
-  --bug-id 1 \
-  --provider openrouter \
-  --model deepseek/deepseek-v4-flash \
-  --approval approved \
-  --reviewer Hari
-```
+For the web workflow, prefer the in-app review step because the repair and validation evidence can be inspected before the decision is recorded.
 
 ## Evidence files
 
-Each run writes files under `outputs/`, including:
-
-```text
-baseline_reproduction.json
-source_context.json
-bug_detection_prompt.json
-bug_detection_result.json
-fix_generation_prompt.json
-fix_generation_result.json
-validation_result.json
-evaluation_metrics.json
-applied_patch.diff
-final_experiment_report.html
-snapshots/original/...
-snapshots/updated/...
-snapshots/benchmark_fixed/...
-```
-
-These snapshots allow the UI to show the exact original buggy source, the exact LLM-updated source, and the benchmark fixed reference side by side.
+A completed workspace normally contains `baseline_reproduction.json`, source-context and prompt files, model results, `validation_result.json`, `human_approval_decision.json`, `evaluation_metrics.json`, `applied_patch.diff`, the final report, and original/repaired/reference source snapshots.
 
 ## Deployment
 
-For deployment, use GitHub + Render + Docker. The repository contains a Dockerfile that installs the app, Java, BugsInPy, Defects4J and required runtime tools.
+The Docker image installs Python, Java, BugsInPy, Defects4J and the application dependencies. Runtime `jobs/` and `workspaces/` are ephemeral unless persistent storage is configured, while submitted `evidence/` and `results/` are built into the image.
 
-See `CLOUD_HOSTING_GUIDE.md` for the deployment steps and environment variables.
+See `CLOUD_HOSTING_GUIDE.md` for deployment details.

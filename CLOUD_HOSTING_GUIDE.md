@@ -1,81 +1,59 @@
 # Cloud hosting guide
 
-This guide describes how to host the LLM Code Quality Pipeline as a Streamlit web application.
+This project can be hosted as a Streamlit web service on Render using the supplied Dockerfile.
 
 ## Hosting model
 
-Use one hosted Streamlit application on Render, with the source code stored in GitHub and the runtime prepared by Docker.
-
 ```text
-GitHub stores the source code
+GitHub stores the source and submitted evidence
 Docker installs Python, Java, BugsInPy, Defects4J and Python packages
-Render runs the Streamlit web service and provides one public URL
+Render runs the Streamlit service
 ```
 
-## Why Docker is required
-
-The application is not only a dashboard. It can also run benchmark commands. A cloud server must therefore contain the same supporting tools used locally:
-
-```text
-Python
-Java JDK
-Git
-SVN
-Perl / make / unzip
-BugsInPy
-Defects4J
-```
-
-The Dockerfile installs these items into the image. Benchmark workspaces are not committed. A selected bug is checked out only when a user starts a run.
-
-## Render settings
-
-Create a Render Web Service from the GitHub repository and select Docker as the runtime.
-
-Environment variables:
+## Render environment variables
 
 ```text
 PIPELINE_ALLOW_LOCAL_FALLBACK=false
-APP_RUN_PASSWORD=<password for running new benchmark jobs>
-PIPELINE_OPENROUTER_API_KEY=<only needed for real OpenRouter runs>
+PIPELINE_CONTEXT_USE_BENCHMARK_HINTS=false
+APP_RUN_PASSWORD=<optional password for benchmark runs and File Review model calls>
+PIPELINE_OPENROUTER_API_KEY=<required only for real OpenRouter runs>
 ```
 
-The Dockerfile already starts Streamlit with:
+Do not store API keys or passwords in the repository.
 
-```bash
-python -m streamlit run app.py --server.address 0.0.0.0 --server.port ${PORT:-8501} --server.headless true --server.fileWatcherType none
-```
+## Benchmark workflow
 
-Render runs this command automatically. Supervisors and examiners only open the Render URL in a browser.
-
-## Running new benchmark jobs online
-
-The **Run Benchmark** tab starts a background job instead of blocking the browser request. The job writes status files into `jobs/` and evidence into `workspaces/`.
-
-Typical flow:
+The **Run Benchmark** tab starts a background process:
 
 ```text
-Select dataset, project, bug ID and model
-Click Start benchmark run
-Refresh job status while it runs
-Load the completed job in Run Summary / Code Comparison
+Select dataset, project, bug and model
+Start benchmark run
+Refresh status
+Technical validation completes
+Review the saved repair and validation evidence
+Record Approve / Needs changes / Reject
+Load the same run in Run Summary or Code Comparison
 ```
 
-This supports more than the submitted examples because the project and bug dropdowns are discovered from the installed BugsInPy and Defects4J metadata.
+A technically valid background run remains `awaiting_review` until a reviewer records a decision.
 
-## Model testing
+## Submitted evidence
 
-The app supports:
+The repository contains compact evidence under `evidence/` and stable report pointers under `results/`. Run Summary can display submitted evidence on a fresh deployment when a result report points to a workspace under `evidence/`.
+
+New online executions use `jobs/` and `workspaces/`. These runtime folders are not committed.
+
+## Persistence
+
+Render services can restart or redeploy. Runtime files under `jobs/` and `workspaces/` may disappear unless a persistent disk is configured.
+
+Submitted dissertation evidence is stored under `evidence/` and `results/` in the repository and is rebuilt into the Docker image on deployment. For longer experiment campaigns, use persistent storage or copy/download generated evidence after each run.
+
+## Model providers
 
 ```text
-mock              repeatable, cost-free model used for pipeline validation
-openrouter        real LLM call using PIPELINE_OPENROUTER_API_KEY
+mock        deterministic, cost-free pipeline validation
+openrouter  real LLM request using PIPELINE_OPENROUTER_API_KEY
 ```
 
-For OpenRouter, enter the model ID in the UI. This allows testing another model without changing the code.
-
-## Evidence and persistence
-
-The submitted evidence under `evidence/` and `results/` is part of the repository. New online runs are generated under `workspaces/` and `jobs/` at runtime.
-
-For long multi-bug experiments, use persistent storage or download the evidence after each successful run. Cloud services can restart or redeploy; runtime-generated folders may be lost unless persistent storage is configured.
+The OpenRouter model ID can be selected or entered in the UI without changing application code.

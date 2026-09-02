@@ -10,7 +10,7 @@
   "baseline_failure_observed": true,
   "detection_bug_found": true,
   "detection_file_path": "source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java",
-  "detection_confidence": 0.95,
+  "detection_confidence": 0.88,
   "patch_present": true,
   "files_modified": [
     "source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java"
@@ -23,12 +23,9 @@
   "post_fix_improved": true,
   "repair_status": "successful_repair",
   "human_decision": "approved",
-  "reviewer": "Hari",
+  "reviewer": "Harsha",
   "human_allows_progress": true,
   "retry_count": 0,
-  "total_known_execution_time_seconds": 203.451,
-  "failure_reason": null,
-  "changed_files": [
-    "source/org/jfree/chart/renderer/category/AbstractCategoryItemRenderer.java"
-  ]
+  "total_known_execution_time_seconds": 238.711,
+  "failure_reason": null
 }

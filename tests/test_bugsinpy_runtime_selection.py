@@ -1,5 +1,6 @@
 """BugsInPy benchmark commands use the recorded target Python runtime."""
 
+import os
 from pathlib import Path
 
 from llm_pipeline.datasets.bugsinpy import BugsInPyAdapter
@@ -72,7 +73,7 @@ def test_compile_uses_recorded_python_version(tmp_path: Path) -> None:
 
     adapter.compile_project(checkout)
 
-    assert runner.calls[-1]["environment"] == {"PYENV_VERSION": "3.7.3"}
+    assert runner.calls[-1]["environment"]["PYENV_VERSION"] == "3.7.3"
     assert runner.calls[-1]["command"] == ["/tools/bin/bugsinpy-compile"]
 
 
@@ -83,7 +84,7 @@ def test_triggering_test_uses_recorded_python_version(tmp_path: Path) -> None:
 
     adapter.run_triggering_tests(checkout)
 
-    assert runner.calls[-1]["environment"] == {"PYENV_VERSION": "3.7.3"}
+    assert runner.calls[-1]["environment"]["PYENV_VERSION"] == "3.7.3"
     assert runner.calls[-1]["command"] == ["/tools/bin/bugsinpy-test"]
 
 
@@ -95,3 +96,24 @@ def test_missing_python_version_does_not_force_pyenv(tmp_path: Path) -> None:
     adapter.compile_project(checkout)
 
     assert runner.calls[-1]["environment"] == {}
+
+def test_installed_pyenv_runtime_bin_is_prepended_to_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    pyenv_root = tmp_path / "pyenv"
+    runtime_bin = pyenv_root / "versions" / "3.7.3" / "bin"
+    runtime_bin.mkdir(parents=True)
+
+    monkeypatch.setenv("PYENV_ROOT", str(pyenv_root))
+    monkeypatch.setenv("PATH", "/usr/local/bin:/usr/bin")
+
+    runner = CapturingRunner()
+    adapter = BugsInPyAdapter(runner, executable_directory="/tools/bin")
+    checkout = _checkout(tmp_path, "3.7.3")
+
+    adapter.compile_project(checkout)
+
+    environment = runner.calls[-1]["environment"]
+    assert environment["PYENV_VERSION"] == "3.7.3"
+    assert environment["PATH"].split(os.pathsep)[0] == str(runtime_bin)

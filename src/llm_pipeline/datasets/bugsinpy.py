@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -272,7 +273,26 @@ class BugsInPyAdapter(DatasetAdapter):
         runtime = str(
             checkout.bug_case.metadata.get("python_version") or ""
         ).strip()
-        environment = {"PYENV_VERSION": runtime} if runtime else None
+        environment = None
+        if runtime:
+            environment = {"PYENV_VERSION": runtime}
+
+            # BugsInPy creates its project venv with the literal command
+            # `python3 -m venv env`. On hosted images, relying on pyenv's
+            # selection variable alone can still resolve `python3` to the
+            # application's default interpreter. When the requested pyenv
+            # runtime is installed, prepend its bin directory explicitly so
+            # the benchmark script creates the venv with the recorded runtime.
+            pyenv_root = str(os.environ.get("PYENV_ROOT") or "").strip()
+            if pyenv_root:
+                runtime_bin = Path(pyenv_root) / "versions" / runtime / "bin"
+                if runtime_bin.is_dir():
+                    current_path = str(os.environ.get("PATH") or "")
+                    environment["PATH"] = (
+                        str(runtime_bin)
+                        if not current_path
+                        else str(runtime_bin) + os.pathsep + current_path
+                    )
 
         try:
             result = self.command_runner.run(

@@ -25,6 +25,79 @@ from llm_pipeline.utils.command_runner import CommandRunner
 from llm_pipeline.workspace.manager import WorkspacePaths
 
 
+def classify_bugsinpy_test_result(result: CommandResult | None) -> str:
+    """Classify BugsInPy wrapper output as passed, failed, error, or unknown.
+
+    The BugsInPy shell wrapper can exit with status 0 even when the inner test
+    command fails or crashes.  This classifier therefore follows the benchmark's
+    own testall conventions: collection/import/harness errors are rejected before
+    ordinary test failures are accepted.
+    """
+    if result is None or result.timed_out:
+        return "error"
+
+    output = f"{result.stdout}\n{result.stderr}"
+    lowered = output.lower()
+
+    # Hard execution/collection errors must never be counted as reproduced bugs
+    # or successful repairs.  Keep this list specific so an application test that
+    # legitimately raises an exception can still be classified from its test
+    # summary below.
+    hard_error_patterns = (
+        r"errors? during collection",
+        r"error collecting",
+        r"importerror while importing test module",
+        r"importerror while loading",
+        r"collected\s+0\s+items?",
+        r"no tests ran",
+        r"you have not compile this project",
+        r": command not found",
+        r"error: not found:",
+    )
+    if any(re.search(pattern, lowered) for pattern in hard_error_patterns):
+        return "error"
+
+    # Older pytest versions can crash before collection on a newer interpreter.
+    # Those tracebacks do not always include an ERRORS section.
+    if (
+        "traceback (most recent call last)" in lowered
+        and ("_pytest/" in lowered or "site-packages/pytest" in lowered)
+        and ("importerror" in lowered or "modulenotfounderror" in lowered)
+    ):
+        return "error"
+
+    failure_patterns = (
+        r"=+\s+failures?\s+=+",
+        r"=+\s+errors?\s+=+",
+        r"\b\d+\s+failed\b",
+        r"\b\d+\s+errors?\b",
+        r"failed\s*\([^)]*(?:failures?|errors?)=\d+",
+    )
+    if any(re.search(pattern, lowered) for pattern in failure_patterns):
+        return "failed"
+
+    fail_file = Path(result.working_directory) / "bugsinpy_fail.txt"
+    try:
+        if fail_file.is_file() and fail_file.stat().st_size > 0:
+            return "failed"
+    except OSError:
+        pass
+
+    pass_patterns = (
+        r"\b\d+\s+passed\b",
+        r"(?:^|\n)ok(?:\s|$)",
+    )
+    if any(re.search(pattern, lowered) for pattern in pass_patterns):
+        return "passed"
+
+    # A non-zero wrapper status without a recognised test failure is treated as
+    # an execution error, not as evidence of the benchmark defect.
+    if not result.succeeded:
+        return "error"
+
+    return "unknown"
+
+
 class BugsInPyAdapter(DatasetAdapter):
     """Run BugsInPy commands and convert their output into pipeline schemas."""
 
@@ -273,9 +346,9 @@ class BugsInPyAdapter(DatasetAdapter):
         runtime = str(
             checkout.bug_case.metadata.get("python_version") or ""
         ).strip()
-        environment = None
+        environment: dict[str, str] = {}
         if runtime:
-            environment = {"PYENV_VERSION": runtime}
+            environment["PYENV_VERSION"] = runtime
 
             # BugsInPy creates its project venv with the literal command
             # `python3 -m venv env`. On hosted images, relying on pyenv's
@@ -293,6 +366,37 @@ class BugsInPyAdapter(DatasetAdapter):
                         if not current_path
                         else str(runtime_bin) + os.pathsep + current_path
                     )
+
+        # Keep the checked-out project importable when BugsInPy invokes pytest
+        # through the virtualenv's console script. Some older projects otherwise
+        # fail during collection even though their package source is present.
+        if command_name == "bugsinpy-test":
+            python_paths = [str(project_path)]
+            configured_paths = str(
+                checkout.bug_case.metadata.get("pythonpath") or ""
+            ).strip()
+            for item in configured_paths.split(";"):
+                relative = item.strip()
+                if not relative:
+                    continue
+                candidate = Path(relative)
+                if not candidate.is_absolute():
+                    candidate = project_path / candidate
+                try:
+                    resolved = str(candidate.expanduser().resolve())
+                except OSError:
+                    resolved = str(candidate)
+                if resolved not in python_paths:
+                    python_paths.append(resolved)
+
+            current_pythonpath = str(os.environ.get("PYTHONPATH") or "").strip()
+            if current_pythonpath:
+                python_paths.extend(
+                    value
+                    for value in current_pythonpath.split(os.pathsep)
+                    if value and value not in python_paths
+                )
+            environment["PYTHONPATH"] = os.pathsep.join(python_paths)
 
         try:
             result = self.command_runner.run(

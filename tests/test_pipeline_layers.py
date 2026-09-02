@@ -143,7 +143,11 @@ def test_baseline_failed_detects_attribute_error_with_zero_exit(tmp_path):
         command=["bugsinpy-test"],
         working_directory=tmp_path,
         return_code=0,
-        stdout="AttributeError: <module 'httpie.downloads'> does not have the attribute 'get_filename_max_length'",
+        stdout=(
+            "============================= FAILURES =============================\n"
+            "AttributeError: <module 'httpie.downloads'> does not have the attribute 'get_filename_max_length'\n"
+            "=========================== 1 failed in 0.01s ===========================\n"
+        ),
         stderr="",
         execution_time_seconds=1.0,
     )

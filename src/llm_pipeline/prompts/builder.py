@@ -361,8 +361,9 @@ def build_fix_generation_prompt(
         fix_instructions.append(_benchmark_guidance(source_context, forced_focus=True))
     if retry:
         fix_instructions.append(
-            "This is a retry because the previous provider response did not include a usable patch. "
-            "Return a non-empty fixed_files object with the complete corrected affected file content."
+            "This is a retry because the previous repair was missing, unusable, or failed validation. "
+            "Return a non-empty repair for the same affected file. Use fixed_files only when the complete "
+            "affected file is supplied; otherwise return a minimal unified diff against the supplied excerpt."
         )
     failure_output = _failure_output_for_prompt(source_context, real_llm=real_llm)
     user_content = (

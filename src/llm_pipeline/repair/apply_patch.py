@@ -7,9 +7,10 @@ import json
 import re
 import subprocess
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from llm_pipeline.datasets.base import DatasetAdapter
+from llm_pipeline.datasets.bugsinpy import classify_bugsinpy_test_result
 from llm_pipeline.schemas import CommandResult, DatasetCheckoutResult
 
 
@@ -19,6 +20,7 @@ def apply_generated_patch(
     fix_result: Mapping[str, Any],
     adapter: DatasetAdapter,
     outputs_dir: Path | str,
+    allowed_files: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Apply the LLM-generated change and rerun the benchmark checks.
 
@@ -41,10 +43,41 @@ def apply_generated_patch(
     patch_file = outputs / "applied_patch.diff"
     patch_file.write_text(clean_patch_text, encoding="utf-8")
 
+    scope_violation = _repair_scope_violation(
+        fix_result=fix_result,
+        patch_text=clean_patch_text,
+        allowed_files=allowed_files,
+    )
+    if scope_violation:
+        validation = {
+            "patch_applied": False,
+            "patch_strategy": None,
+            "already_applied": False,
+            "compilation_passed": False,
+            "triggering_tests_passed": False,
+            "validation_scope": "triggering_tests",
+            "changed_files": target_files,
+            "failure_reason": scope_violation,
+        }
+        (outputs / "post_patch_compile.json").write_text(
+            json.dumps(
+                {"skipped": True, "reason": scope_violation},
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        write_validation(outputs, validation)
+        return validation
+
     patch_applied = _apply_fixed_files(project_root, fix_result)
     patch_strategy = "fixed_files" if patch_applied else None
 
-    if not patch_applied and clean_patch_text.strip():
+    if (
+        not patch_applied
+        and clean_patch_text.strip()
+        and _diff_targets_are_existing_files(project_root, clean_patch_text)
+    ):
         patch_applied = _apply_git_patch(project_root, patch_file)
         patch_strategy = "git_apply" if patch_applied else None
 
@@ -56,24 +89,49 @@ def apply_generated_patch(
     if patch_applied:
         _write_clean_evidence_diff(outputs, target_files)
 
-    compile_result = adapter.compile_project(checkout)
-    if compile_result.succeeded and checkout.bug_case.dataset.lower() == "bugsinpy":
-        _install_python_project_editable(project_root, outputs)
+    if not patch_applied:
+        (outputs / "post_patch_compile.json").write_text(
+            json.dumps(
+                {"skipped": True, "reason": "Patch was not applied; compile was not run."},
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        validation = {
+            "patch_applied": False,
+            "patch_strategy": patch_strategy,
+            "already_applied": False,
+            "compilation_passed": False,
+            "triggering_tests_passed": False,
+            "validation_scope": "triggering_tests",
+            "changed_files": target_files,
+            "failure_reason": "Patch could not be applied.",
+        }
+        write_validation(outputs, validation)
+        return validation
+
+    compile_result = _compile_after_patch(
+        checkout=checkout,
+        adapter=adapter,
+        project_root=project_root,
+        target_files=target_files,
+    )
     test_result = adapter.run_triggering_tests(checkout) if compile_result.succeeded else None
 
     compile_log = outputs / "post_patch_compile.json"
     compile_log.write_text(
-        json.dumps(compile_result.model_dump(mode="json"), indent=2),
+        json.dumps(compile_result.model_dump(mode="json"), indent=2) + "\n",
         encoding="utf-8",
     )
     if test_result:
         (outputs / "post_patch_triggering_test.json").write_text(
-            json.dumps(test_result.model_dump(mode="json"), indent=2),
+            json.dumps(test_result.model_dump(mode="json"), indent=2) + "\n",
             encoding="utf-8",
         )
 
     validation = {
-        "patch_applied": bool(patch_applied),
+        "patch_applied": True,
         "patch_strategy": patch_strategy,
         "already_applied": False,
         "compilation_passed": compile_result.succeeded,
@@ -102,6 +160,52 @@ def write_validation(outputs: Path, validation: Mapping[str, Any]) -> None:
     )
     (outputs / "validation_result.txt").write_text(_validation_text(validation), encoding="utf-8")
 
+
+
+def _repair_scope_violation(
+    *,
+    fix_result: Mapping[str, Any],
+    patch_text: str,
+    allowed_files: Sequence[str] | None,
+) -> str | None:
+    """Reject real-model repairs that leave the supplied file-level scope."""
+    if not allowed_files:
+        return None
+
+    allowed = {
+        _clean_relative_path(str(value))
+        for value in allowed_files
+        if _clean_relative_path(str(value))
+    }
+    if not allowed:
+        return None
+
+    actionable: list[str] = []
+    fixed_files = fix_result.get("fixed_files") or {}
+    if isinstance(fixed_files, Mapping):
+        for value in fixed_files:
+            path = _clean_relative_path(str(value))
+            if path and path not in actionable:
+                actionable.append(path)
+
+    for value in _files_from_unified_diff(patch_text):
+        path = _clean_relative_path(str(value))
+        if path and path not in actionable:
+            actionable.append(path)
+
+    if not actionable:
+        for value in fix_result.get("files_modified") or []:
+            path = _clean_relative_path(str(value))
+            if path and path not in actionable:
+                actionable.append(path)
+
+    outside = [path for path in actionable if path not in allowed]
+    if outside:
+        return (
+            "Generated repair targeted file(s) outside the benchmark candidate scope: "
+            + ", ".join(outside)
+        )
+    return None
 
 
 def _changed_file_candidates(fix_result: Mapping[str, Any], patch_text: str) -> list[str]:
@@ -307,6 +411,79 @@ def _strip_code_fence(text: str) -> str:
     if lines and lines[-1].strip() == "```":
         lines = lines[:-1]
     return "\n".join(lines)
+
+
+def _diff_targets_are_existing_files(project_root: Path, patch_text: str) -> bool:
+    """Allow unified diffs only for existing files inside the checkout.
+
+    Benchmark repair tasks modify existing application files. Blocking file
+    creation prevents a hallucinated new file from surviving in a reused
+    prepared checkout.
+    """
+    targets = _files_from_unified_diff(patch_text)
+    if not targets:
+        return False
+
+    root = project_root.resolve()
+    for relative in targets:
+        target = (project_root / _clean_relative_path(relative)).resolve()
+        if root not in target.parents and target != root:
+            return False
+        if not target.is_file():
+            return False
+    return True
+
+
+def _compile_after_patch(
+    *,
+    checkout: DatasetCheckoutResult,
+    adapter: DatasetAdapter,
+    project_root: Path,
+    target_files: list[str],
+) -> CommandResult:
+    """Compile a repair without rebuilding a prepared BugsInPy environment.
+
+    ``bugsinpy-compile`` recreates the virtual environment and reinstalls every
+    dependency. Once the baseline environment has been prepared and verified,
+    Python repairs only need a syntax compilation before the benchmark test is
+    rerun. This keeps validation fast and avoids dependency drift.
+    """
+    if checkout.bug_case.dataset.lower() != "bugsinpy":
+        return adapter.compile_project(checkout)
+
+    env_python = project_root / "env" / "bin" / "python"
+    python_files: list[str] = []
+    root = project_root.resolve()
+    for relative in target_files:
+        clean = _clean_relative_path(relative)
+        target = (project_root / clean).resolve()
+        if (
+            clean.lower().endswith(".py")
+            and root in target.parents
+            and target.is_file()
+        ):
+            python_files.append(str(target))
+
+    if not env_python.is_file() or not python_files:
+        return adapter.compile_project(checkout)
+
+    command = [str(env_python), "-m", "py_compile", *python_files]
+    completed = subprocess.run(
+        command,
+        cwd=project_root,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+    return CommandResult(
+        command=command,
+        working_directory=project_root,
+        return_code=completed.returncode,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        execution_time_seconds=0,
+    )
 
 
 def _apply_git_patch(project_root: Path, patch_file: Path) -> bool:
@@ -591,7 +768,7 @@ def _install_python_project_editable(project_root: Path, outputs: Path) -> None:
         return
 
     completed = subprocess.run(
-        [str(env_python), "-m", "pip", "install", "-e", "."],
+        [str(env_python), "-m", "pip", "install", "--no-deps", "-e", "."],
         cwd=project_root,
         text=True,
         capture_output=True,
@@ -599,7 +776,7 @@ def _install_python_project_editable(project_root: Path, outputs: Path) -> None:
         timeout=600,
     )
     result = CommandResult(
-        command=[str(env_python), "-m", "pip", "install", "-e", "."],
+        command=[str(env_python), "-m", "pip", "install", "--no-deps", "-e", "."],
         working_directory=project_root,
         return_code=completed.returncode,
         stdout=completed.stdout,
@@ -629,25 +806,7 @@ def _test_output_passed(result: CommandResult, *, dataset: str | None = None) ->
         return int(defects4j_match.group(1)) == 0
 
     if dataset_name == "bugsinpy":
-        # BugsInPy's shell wrapper can itself exit 0 even when the inner pytest
-        # process crashes. Reject explicit execution/test failures before using
-        # the wrapper return code as the success signal.
-        fatal_markers = [
-            "traceback (most recent call last)",
-            "modulenotfounderror",
-            "importerror",
-            "assertionerror",
-            "attributeerror",
-            "syntaxerror",
-            "collection error",
-            "errors during collection",
-            "= failed",
-            " failed,",
-            " failures ",
-        ]
-        if any(marker in output for marker in fatal_markers):
-            return False
-        return result.succeeded
+        return classify_bugsinpy_test_result(result) == "passed"
 
     if result.succeeded:
         return True

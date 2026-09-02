@@ -15,6 +15,7 @@ from uuid import uuid4
 from llm_pipeline.config import get_settings
 from llm_pipeline.context.file_discovery import FileDiscovery
 from llm_pipeline.context.source_context import SourceContextBuilder
+from llm_pipeline.datasets.bugsinpy import classify_bugsinpy_test_result
 from llm_pipeline.datasets.factory import (
     adapter_source_extensions,
     adapter_source_file_names,
@@ -107,7 +108,21 @@ def _load_prepared_bugsinpy_baseline(
     project_path = baseline.checkout.bug_case.workspace_path
     if not project_path.is_dir():
         return None
-    if not baseline.setup_succeeded or not _baseline_failed(baseline.test_result):
+
+    cached_classification = str(
+        baseline.checkout.bug_case.metadata.get(
+            "pipeline_baseline_test_classification"
+        )
+        or ""
+    ).strip().lower()
+    baseline_is_failure = (
+        cached_classification == "failed"
+        if cached_classification
+        else _baseline_failed(
+            baseline.test_result, dataset=baseline.checkout.bug_case.dataset
+        )
+    )
+    if not baseline.setup_succeeded or not baseline_is_failure:
         return None
     return baseline
 
@@ -125,9 +140,40 @@ def _prepare_or_reuse_bugsinpy_baseline(
 
     if cached is not None:
         # A previous model run may have modified tracked source files in the
-        # prepared checkout. Restore the benchmark's buggy revision before reuse.
-        _reset_project_changes(cached.checkout.bug_case.workspace_path)
-        return cached, True, cache_root
+        # prepared checkout. Restore only candidate application source files so
+        # BugsInPy's fixed-revision triggering-test copy remains in place.
+        _reset_project_changes(
+            cached.checkout.bug_case.workspace_path,
+            files=_file_localisation_candidates(cached.checkout),
+        )
+
+        # Re-running only the triggering test is cheap and proves the prepared
+        # checkout still reproduces the benchmark defect after source reset.
+        # If the environment/test harness has drifted, discard the cache and
+        # rebuild rather than sending misleading evidence to the LLM.
+        reuse_test_result = adapter.run_triggering_tests(cached.checkout)
+        reuse_classification = classify_bugsinpy_test_result(reuse_test_result)
+        if reuse_classification == "failed":
+            metadata = dict(cached.checkout.bug_case.metadata)
+            metadata["pipeline_baseline_test_classification"] = reuse_classification
+            checkout = cached.checkout.model_copy(
+                update={
+                    "bug_case": cached.checkout.bug_case.model_copy(
+                        update={"metadata": metadata}
+                    )
+                }
+            )
+            cached = cached.model_copy(
+                update={
+                    "checkout": checkout,
+                    "test_result": reuse_test_result,
+                }
+            )
+            cached.summary_file.write_text(
+                json.dumps(cached.model_dump(mode="json"), indent=2) + "\n",
+                encoding="utf-8",
+            )
+            return cached, True, cache_root
 
     # Never reuse a partial/stale preparation.
     if cache_root.exists():
@@ -143,6 +189,17 @@ def _prepare_or_reuse_bugsinpy_baseline(
         adapter.run_triggering_tests(checkout)
         if compile_result.succeeded
         else None
+    )
+
+    classification = classify_bugsinpy_test_result(test_result)
+    metadata = dict(checkout.bug_case.metadata)
+    metadata["pipeline_baseline_test_classification"] = classification
+    checkout = checkout.model_copy(
+        update={
+            "bug_case": checkout.bug_case.model_copy(
+                update={"metadata": metadata}
+            )
+        }
     )
 
     baseline = BaselineReproductionResult(
@@ -241,7 +298,15 @@ def run_final_pipeline(
         json.dumps(baseline.model_dump(mode="json"), indent=2) + "\n",
         encoding="utf-8",
     )
-    baseline_failed = _baseline_failed(test_result)
+    cached_classification = str(
+        checkout.bug_case.metadata.get("pipeline_baseline_test_classification")
+        or ""
+    ).strip().lower()
+    baseline_failed = (
+        cached_classification == "failed"
+        if selected_dataset == "bugsinpy" and cached_classification
+        else _baseline_failed(test_result, dataset=selected_dataset)
+    )
     (workspace.outputs / "baseline_reuse.json").write_text(
         json.dumps(
             {
@@ -358,6 +423,7 @@ def run_final_pipeline(
     client = _create_model_client(provider, active_model_name, settings)
     real_llm = provider.lower() == "openrouter"
     source_context_json = source_context.model_dump(mode="json")
+    file_candidates: list[str] = []
     if real_llm:
         file_candidates = _add_file_localisation_context(
             source_context_json,
@@ -385,16 +451,24 @@ def run_final_pipeline(
     bug_response = client.complete(bug_prompt)
     save_model_outputs(bug_response, workspace.outputs, "bug_detection_initial" if real_llm else "bug_detection")
 
-    if real_llm and not bug_response.content.get("bug_found") and baseline_failed:
+    detection_ok = (
+        _detection_matches_file_scope(bug_response.content, file_candidates)
+        if real_llm
+        else bool(bug_response.content.get("bug_found"))
+    )
+
+    if real_llm and not detection_ok and baseline_failed:
         retry_prompt = build_bug_detection_prompt(source_context_json, real_llm=True, retry=True)
         retry_prompt.setdefault("metadata", {})["project_path"] = str(checkout.bug_case.workspace_path)
         save_prompt(retry_prompt, workspace.outputs, "bug_detection_retry_prompt")
         retry_response = client.complete(retry_prompt)
         save_model_outputs(retry_response, workspace.outputs, "bug_detection_retry")
-        if retry_response.content.get("bug_found") or not bug_response.content.get("bug_found"):
+        retry_ok = _detection_matches_file_scope(retry_response.content, file_candidates)
+        if retry_ok or not detection_ok:
             bug_response = retry_response
+            detection_ok = retry_ok
 
-    if real_llm and not bug_response.content.get("bug_found") and baseline_failed:
+    if real_llm and not detection_ok and baseline_failed:
         forced_prompt = build_bug_detection_prompt(
             source_context_json,
             real_llm=True,
@@ -405,11 +479,104 @@ def run_final_pipeline(
         save_prompt(forced_prompt, workspace.outputs, "bug_detection_forced_prompt")
         forced_response = client.complete(forced_prompt)
         save_model_outputs(forced_response, workspace.outputs, "bug_detection_forced")
-        if forced_response.content.get("bug_found") or not bug_response.content.get("bug_found"):
+        forced_ok = _detection_matches_file_scope(forced_response.content, file_candidates)
+        if forced_ok or not detection_ok:
             bug_response = forced_response
+            detection_ok = forced_ok
 
     save_model_outputs(bug_response, workspace.outputs, "bug_detection")
-    steps.append(Step("bug_detection", "passed" if bug_response.content.get("bug_found") else "failed"))
+    steps.append(Step("bug_detection", "passed" if detection_ok else "failed"))
+
+    if real_llm and not detection_ok:
+        failure_reason = (
+            "The model did not localise the benchmark defect within the supplied "
+            "candidate application file scope after the available detection attempts."
+        )
+        skipped_fix = {
+            "patch": "",
+            "explanation": failure_reason,
+            "files_modified": [],
+            "fixed_files": {},
+        }
+        (workspace.outputs / "fix_generation_result.json").write_text(
+            json.dumps(skipped_fix, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        (workspace.outputs / "fix_generation_result.txt").write_text(
+            _as_text(skipped_fix),
+            encoding="utf-8",
+        )
+        validation = {
+            "patch_applied": False,
+            "patch_strategy": None,
+            "already_applied": False,
+            "compilation_passed": False,
+            "triggering_tests_passed": False,
+            "validation_scope": "triggering_tests",
+            "changed_files": [],
+            "failure_reason": failure_reason,
+        }
+        write_validation(workspace.outputs, validation)
+        (workspace.outputs / "post_patch_compile.json").write_text(
+            json.dumps(
+                {"skipped": True, "reason": failure_reason},
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        steps.append(Step("fix_generation", "failed", "skipped after unsuccessful localisation"))
+        steps.append(Step("patch_validation", "failed", "skipped after unsuccessful localisation"))
+        post_fix = create_post_fix_evaluation(
+            candidate_record=record,
+            validation=validation,
+            outputs_dir=workspace.outputs,
+        )
+        steps.append(Step("post_fix_evaluation", "failed"))
+        create_human_approval(
+            candidate_record=record,
+            outputs_dir=workspace.outputs,
+            decision="pending",
+            reviewer="",
+            comments="Technical repair generation was skipped because localisation did not succeed.",
+        )
+        steps.append(Step("human_approval", "blocked"))
+        metrics = create_evaluation_metrics(
+            candidate_record=record,
+            outputs_dir=workspace.outputs,
+        )
+        steps.append(Step("metrics", "failed"))
+
+        result = {
+            "dataset": checkout.bug_case.dataset,
+            "language": checkout.bug_case.language,
+            "project": project,
+            "bug_id": bug_id,
+            "mode": "clean",
+            "overall_status": "failed",
+            "successful": False,
+            "provider": provider,
+            "model_name": active_model_name,
+            "workspace_path": str(workspace.root),
+            "candidate_report": str(candidate_report),
+            "failure_reason": failure_reason,
+            "steps": [asdict(step) for step in steps],
+            "created_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        }
+        (workspace.outputs / "workflow_pipeline_result.json").write_text(
+            json.dumps(result, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        (workspace.outputs / "workflow_pipeline_result.txt").write_text(
+            _as_text(result),
+            encoding="utf-8",
+        )
+        (workspace.outputs / "pipeline_run_manifest.json").write_text(
+            json.dumps(result, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        generate_final_experiment_report(candidate_report_path=candidate_report)
+        return result
 
     if real_llm and bug_response.content.get("file_path"):
         _add_focused_file_content(
@@ -478,6 +645,7 @@ def run_final_pipeline(
         fix_result=fix_response.content,
         adapter=adapter,
         outputs_dir=workspace.outputs,
+        allowed_files=file_candidates if real_llm and file_candidates else None,
     )
     validation_ok = bool(validation.get("patch_applied") and validation.get("compilation_passed") and validation.get("triggering_tests_passed"))
 
@@ -498,7 +666,10 @@ def run_final_pipeline(
         if isinstance(additional, dict):
             additional["previous_validation_feedback"] = json.dumps(previous_feedback, indent=2)
 
-        _reset_project_changes(checkout.bug_case.workspace_path)
+        _reset_project_changes(
+            checkout.bug_case.workspace_path,
+            files=file_candidates or _file_localisation_candidates(checkout),
+        )
 
         validation_retry_prompt = build_fix_generation_prompt(
             source_context_json,
@@ -520,6 +691,7 @@ def run_final_pipeline(
                 fix_result=fix_response.content,
                 adapter=adapter,
                 outputs_dir=workspace.outputs,
+                allowed_files=file_candidates if real_llm and file_candidates else None,
             )
             validation_ok = bool(
                 validation.get("patch_applied")
@@ -528,7 +700,10 @@ def run_final_pipeline(
             )
 
     if real_llm and bug_response.content.get("bug_found") and not validation_ok:
-        _reset_project_changes(checkout.bug_case.workspace_path)
+        _reset_project_changes(
+            checkout.bug_case.workspace_path,
+            files=file_candidates or _file_localisation_candidates(checkout),
+        )
         local_repair = _build_local_benchmark_repair(
             project=project,
             bug_id=bug_id,
@@ -545,6 +720,7 @@ def run_final_pipeline(
                 fix_result=local_repair,
                 adapter=adapter,
                 outputs_dir=workspace.outputs,
+                allowed_files=file_candidates if real_llm and file_candidates else None,
             )
             validation["repair_source"] = "local_benchmark_fallback_after_llm_validation_failure"
             write_validation(workspace.outputs, validation)
@@ -916,6 +1092,30 @@ def _initial_focused_file(checkout: Any) -> str | None:
     return candidates[0] if candidates else None
 
 
+def _detection_matches_file_scope(
+    detection: Mapping[str, Any],
+    candidate_files: list[str],
+) -> bool:
+    """Return True only for a positive detection inside the supplied file scope."""
+    if not bool(detection.get("bug_found")):
+        return False
+    if not candidate_files:
+        return True
+
+    path = str(detection.get("file_path") or "").strip().replace("\\", "/")
+    while path.startswith("./"):
+        path = path[2:]
+    if path.startswith("a/") or path.startswith("b/"):
+        path = path[2:]
+
+    allowed = {
+        str(value).strip().replace("\\", "/")
+        for value in candidate_files
+        if str(value).strip()
+    }
+    return bool(path and path in allowed)
+
+
 def _fix_contains_change(content: dict[str, Any]) -> bool:
     patch = str(content.get("patch") or "").strip()
     fixed_files = content.get("fixed_files") or {}
@@ -1218,28 +1418,58 @@ def _defects4j_command() -> str | None:
     return shutil.which("defects4j")
 
 
-def _reset_project_changes(project_path: Path) -> None:
-    """Restore tracked project source to HEAD without deleting the cached environment.
+def _reset_project_changes(
+    project_path: Path,
+    *,
+    files: list[str] | tuple[str, ...] | None = None,
+) -> None:
+    """Restore generated source changes without removing benchmark test patches.
 
-    ``git checkout -- .`` restores from the index, so a staged repair can leak
-    into a later model run. ``git reset --hard HEAD`` resets both the index and
-    working tree while leaving untracked/ignored benchmark environments intact.
+    BugsInPy checks out the buggy commit and then copies tests from the fixed
+    revision into the working tree. A repository-wide hard reset therefore
+    destroys the benchmark's triggering-test patch. When candidate source files
+    are known, reset only those files directly from ``HEAD`` so the prepared test
+    harness and virtual environment remain intact across cached model runs.
     """
-    completed = subprocess.run(
-        ["git", "reset", "--hard", "HEAD"],
-        cwd=project_path,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        subprocess.run(
-            ["git", "checkout", "--", "."],
-            cwd=project_path,
+    root = project_path.expanduser().resolve()
+    safe_files: list[str] = []
+    for value in files or []:
+        relative = str(value or "").strip().replace("\\", "/")
+        while relative.startswith("./"):
+            relative = relative[2:]
+        if relative.startswith("a/") or relative.startswith("b/"):
+            relative = relative[2:]
+        if not relative:
+            continue
+        target = (root / relative).resolve()
+        if root not in target.parents:
+            continue
+        # The previous repair may have deleted the candidate file. Keep the
+        # benchmark path eligible so Git can restore it directly from HEAD.
+        if relative not in safe_files:
+            safe_files.append(relative)
+
+    if safe_files:
+        completed = subprocess.run(
+            ["git", "checkout", "HEAD", "--", *safe_files],
+            cwd=root,
             text=True,
             capture_output=True,
             check=False,
         )
+        if completed.returncode == 0:
+            return
+
+    # Non-BugsInPy callers may not have a file-level candidate. Keep the old
+    # full reset as a fallback, but BugsInPy paths normally always resolve from
+    # benchmark changed-file metadata or buggy/fixed commit names.
+    subprocess.run(
+        ["git", "reset", "--hard", "HEAD"],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
 
 def _default_model_name(provider: str, settings: Any) -> str:
     normalised = provider.lower().strip()
@@ -1267,12 +1497,24 @@ def _create_model_client(provider: str, model_name: str, settings: Any):
     raise ValueError(f"Unsupported provider: {provider}. Supported providers are: mock, openrouter.")
 
 
-def _install_checked_out_project(project_path: Path, log_dir: Path) -> None:
+def _install_checked_out_project(project_path: Path, log_dir: Path) -> CommandResult | None:
+    """Install a BugsInPy checkout in editable mode without changing pinned deps.
+
+    BugsInPy prepares the benchmark dependencies itself.  ``--no-deps`` keeps
+    that environment intact while making the checkout importable for projects
+    whose tests do not automatically place the repository root on PYTHONPATH.
+    """
     env_python = project_path / "env" / "bin" / "python"
     if not env_python.exists():
-        return
+        return None
+
+    packaging_files = ("setup.py", "setup.cfg", "pyproject.toml")
+    if not any((project_path / name).exists() for name in packaging_files):
+        return None
+
+    command = [str(env_python), "-m", "pip", "install", "--no-deps", "-e", "."]
     completed = subprocess.run(
-        [str(env_python), "-m", "pip", "install", "-e", "."],
+        command,
         cwd=project_path,
         text=True,
         capture_output=True,
@@ -1280,42 +1522,54 @@ def _install_checked_out_project(project_path: Path, log_dir: Path) -> None:
         timeout=600,
     )
     result = CommandResult(
-        command=[str(env_python), "-m", "pip", "install", "-e", "."],
+        command=command,
         working_directory=project_path,
         return_code=completed.returncode,
         stdout=completed.stdout,
         stderr=completed.stderr,
         execution_time_seconds=0,
     )
-    (log_dir / "project_editable_install.json").write_text(json.dumps(result.model_dump(mode="json"), indent=2), encoding="utf-8")
+    (log_dir / "project_editable_install.json").write_text(
+        json.dumps(result.model_dump(mode="json"), indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return result
 
 
-def _baseline_failed(test_result: CommandResult | None) -> bool:
+def _baseline_failed(
+    test_result: CommandResult | None,
+    *,
+    dataset: str | None = None,
+) -> bool:
+    """Return True only for an actual benchmark test failure.
+
+    BugsInPy's wrapper frequently exits 0 even when pytest crashes, so its
+    output needs benchmark-aware classification rather than broad error-word
+    matching.
+    """
     if test_result is None or test_result.timed_out:
         return False
+
+    command_text = " ".join(str(part) for part in test_result.command).lower()
+    dataset_name = str(dataset or "").lower()
+    if dataset_name == "bugsinpy" or "bugsinpy-test" in command_text:
+        return classify_bugsinpy_test_result(test_result) == "failed"
 
     output = f"{test_result.stdout}\n{test_result.stderr}".lower()
     if not test_result.succeeded:
         return True
+
+    defects4j_match = re.search(r"failing tests:\s*(\d+)", output)
+    if defects4j_match:
+        return int(defects4j_match.group(1)) > 0
 
     failure_markers = [
         " failed",
         "= failed",
         "failures",
         "failure",
-        " error",
-        "= error",
-        "errors",
-        "failing tests:",
-        "failing test:",
-        "failing tests",
-        "failing test",
-        "traceback",
         "assertionerror",
         "attributeerror",
-        "does not have the attribute",
-        "modulenotfounderror",
-        "no module named",
     ]
     return any(marker in output for marker in failure_markers)
 

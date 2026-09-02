@@ -117,3 +117,16 @@ def test_installed_pyenv_runtime_bin_is_prepended_to_path(
     environment = runner.calls[-1]["environment"]
     assert environment["PYENV_VERSION"] == "3.7.3"
     assert environment["PATH"].split(os.pathsep)[0] == str(runtime_bin)
+
+
+def test_triggering_test_adds_checkout_to_pythonpath(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("PYTHONPATH", "/existing/path")
+    runner = CapturingRunner()
+    adapter = BugsInPyAdapter(runner, executable_directory="/tools/bin")
+    checkout = _checkout(tmp_path, "3.7.3")
+
+    adapter.run_triggering_tests(checkout)
+
+    pythonpath = runner.calls[-1]["environment"]["PYTHONPATH"].split(os.pathsep)
+    assert pythonpath[0] == str(checkout.bug_case.workspace_path.resolve())
+    assert "/existing/path" in pythonpath

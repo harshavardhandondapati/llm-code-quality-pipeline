@@ -1219,7 +1219,27 @@ def _defects4j_command() -> str | None:
 
 
 def _reset_project_changes(project_path: Path) -> None:
-    subprocess.run(["git", "checkout", "--", "."], cwd=project_path, text=True, capture_output=True, check=False)
+    """Restore tracked project source to HEAD without deleting the cached environment.
+
+    ``git checkout -- .`` restores from the index, so a staged repair can leak
+    into a later model run. ``git reset --hard HEAD`` resets both the index and
+    working tree while leaving untracked/ignored benchmark environments intact.
+    """
+    completed = subprocess.run(
+        ["git", "reset", "--hard", "HEAD"],
+        cwd=project_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        subprocess.run(
+            ["git", "checkout", "--", "."],
+            cwd=project_path,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
 
 def _default_model_name(provider: str, settings: Any) -> str:
     normalised = provider.lower().strip()

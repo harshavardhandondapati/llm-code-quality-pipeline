@@ -269,11 +269,17 @@ class BugsInPyAdapter(DatasetAdapter):
                 f"Checked-out project folder does not exist: {project_path}"
             )
 
+        runtime = str(
+            checkout.bug_case.metadata.get("python_version") or ""
+        ).strip()
+        environment = {"PYENV_VERSION": runtime} if runtime else None
+
         try:
             result = self.command_runner.run(
                 [self._executable(command_name)],
                 project_path,
                 timeout_seconds=self.timeout_seconds,
+                environment=environment,
             )
         except CommandExecutionError as error:
             raise DatasetEnvironmentError(

@@ -10,6 +10,7 @@ from pathlib import Path
 from llm_pipeline.datasets.bugsinpy import classify_bugsinpy_test_result
 from llm_pipeline.repair.apply_patch import (
     _apply_llm_patch_by_search,
+    _clean_llm_patch_text,
     _compile_after_patch,
     _normalise_patch_block,
     _repair_scope_violation,
@@ -312,4 +313,44 @@ def test_search_apply_preserves_triple_quoted_docstring(tmp_path: Path) -> None:
     assert _apply_llm_patch_by_search(project, patch) is True
     updated = source.read_text(encoding="utf-8")
     assert '"""Valid docstring."""' in updated
+    compile(updated, str(source), "exec")
+
+def test_clean_patch_preserves_python_crlf_escape_literal() -> None:
+    patch = (
+        "--- a/httpie/models.py\n"
+        "+++ b/httpie/models.py\n"
+        "@@ ... @@\n"
+        "-        headers = '\\r\\n'.join(headers).strip()\n"
+        "+        headers = '\\r\\n'.join(headers)\n"
+    )
+
+    cleaned = _clean_llm_patch_text(patch)
+
+    assert "headers = '\\r\\n'.join(headers).strip()" in cleaned
+    assert "headers = '\\r\\n'.join(headers)" in cleaned
+
+
+def test_search_apply_preserves_python_crlf_escape_literal(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    source = project / "httpie" / "models.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "def headers():\n"
+        "    values = ['A', 'B']\n"
+        "    headers = '\\r\\n'.join(values).strip()\n"
+        "    return headers\n",
+        encoding="utf-8",
+    )
+
+    patch = (
+        "--- a/httpie/models.py\n"
+        "+++ b/httpie/models.py\n"
+        "@@ ... @@\n"
+        "-    headers = '\\r\\n'.join(values).strip()\n"
+        "+    headers = '\\r\\n'.join(values)\n"
+    )
+
+    assert _apply_llm_patch_by_search(project, patch) is True
+    updated = source.read_text(encoding="utf-8")
+    assert "headers = '\\r\\n'.join(values)" in updated
     compile(updated, str(source), "exec")

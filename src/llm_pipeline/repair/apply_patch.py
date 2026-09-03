@@ -587,9 +587,6 @@ def _clean_llm_patch_text(patch_text: str) -> str:
     """Clean raw LLM patch text that may contain escaped newlines or JSON fragments."""
     text = patch_text.strip()
 
-    if "\\n" in text:
-        text = text.replace("\\n", "\n")
-
     text = text.replace('\\"', '"')
 
     lines = text.splitlines()
